@@ -9,6 +9,7 @@ import {
   getNegotiation,
   getProduct,
   getSearch,
+  rejectNegotiation,
   type NegotiationDetail,
   type Product,
   type SearchDetail,
@@ -40,6 +41,7 @@ const ACCEPT_ERROR_COPY: Record<string, string> = {
   product_unavailable: "El producto ya no está disponible.",
   over_budget: "El precio quedó por encima de tu tope.",
   not_awaiting_buyer: "Esta negociación ya no está esperando tu confirmación.",
+  negotiation_not_awaiting_buyer: "Esta negociación ya no está esperando tu confirmación.",
   not_the_owner: "No tenés permiso para confirmar esta negociación.",
 };
 
@@ -54,6 +56,9 @@ export default function SearchPage() {
     try {
       const s = await getSearch(searchId);
       setSearch(s);
+      if (s.status === "completed" || s.status === "failed") {
+        stoppedRef.current = true;
+      }
       return s;
     } catch (e) {
       setError((e as Error).message);
@@ -157,7 +162,7 @@ export default function SearchPage() {
                   key={n.id}
                   summary={n}
                   maxPrice={search.maxPrice}
-                  onAccepted={() => {
+                  onAfterAction={() => {
                     void refetch();
                   }}
                 />
@@ -230,11 +235,11 @@ function OutcomeCard({ negotiation }: { negotiation: SearchDetail["negotiations"
 function NegotiationCard({
   summary,
   maxPrice,
-  onAccepted,
+  onAfterAction,
 }: {
   summary: SearchDetail["negotiations"][number];
   maxPrice: number;
-  onAccepted: () => void;
+  onAfterAction: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"product" | "chat">("product");
@@ -242,10 +247,40 @@ function NegotiationCard({
   const [loading, setLoading] = useState(false);
   const [product, setProduct] = useState<Product | null>(null);
   const [productLoading, setProductLoading] = useState(false);
-  const [accepting, setAccepting] = useState(false);
-  const [acceptError, setAcceptError] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
+  const [actionError, setActionError] = useState<string | null>(null);
   const status = NEG_STATUS_COPY[summary.status] ?? NEG_STATUS_COPY.pending;
   const canAccept = summary.status === "awaiting_buyer" && summary.finalPrice != null;
+
+  const handleAccept = async () => {
+    if (!canAccept || actionState !== "idle") return;
+    setActionError(null);
+    setActionState("accepting");
+    try {
+      await acceptNegotiation(summary.id);
+      onAfterAction();
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : "error";
+      setActionError(ACCEPT_ERROR_COPY[code] ?? "No se pudo confirmar la negociación.");
+    } finally {
+      setActionState("idle");
+    }
+  };
+
+  const handleReject = async () => {
+    if (!canAccept || actionState !== "idle") return;
+    setActionError(null);
+    setActionState("rejecting");
+    try {
+      await rejectNegotiation(summary.id);
+      onAfterAction();
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : "error";
+      setActionError(ACCEPT_ERROR_COPY[code] ?? "No se pudo rechazar la negociación.");
+    } finally {
+      setActionState("idle");
+    }
+  };
 
   // Auto-poll messages while the negotiation is running and the card is open.
   useEffect(() => {
@@ -292,21 +327,6 @@ function NegotiationCard({
     };
   }, [open, summary.product.id, product, productLoading]);
 
-  async function handleAccept() {
-    if (!canAccept || accepting) return;
-    setAccepting(true);
-    setAcceptError(null);
-    try {
-      await acceptNegotiation(summary.id);
-      onAccepted();
-    } catch (err) {
-      const code = err instanceof ApiError ? err.code : "error";
-      setAcceptError(ACCEPT_ERROR_COPY[code] ?? "No se pudo confirmar la negociación.");
-    } finally {
-      setAccepting(false);
-    }
-  }
-
   const dropPct =
     summary.finalPrice && summary.product.askPrice > 0
       ? Math.round(((summary.product.askPrice - summary.finalPrice) / summary.product.askPrice) * 100)
@@ -341,6 +361,36 @@ function NegotiationCard({
         </div>
       </button>
 
+      {canAccept && summary.finalPrice != null && (
+        <div className="border-t border-amber-200 bg-amber-50/70 px-4 py-3">
+          <p className="text-sm text-amber-900">
+            Los agentes acordaron <span className="font-semibold">{formatARS(summary.finalPrice)}</span>{" "}
+            para <span className="font-medium">{summary.product.title}</span>. ¿Querés cerrar el trato?
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={handleAccept}
+              disabled={actionState !== "idle"}
+              className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {actionState === "accepting" ? "Cerrando…" : "Aceptar"}
+            </button>
+            <button
+              type="button"
+              onClick={handleReject}
+              disabled={actionState !== "idle"}
+              className="inline-flex items-center justify-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+            >
+              {actionState === "rejecting" ? "Rechazando…" : "No aceptar"}
+            </button>
+          </div>
+          {actionError && (
+            <p className="mt-2 text-xs text-rose-700">No pudimos guardar tu respuesta: {actionError}</p>
+          )}
+        </div>
+      )}
+
       {open && (
         <div className="border-t border-black/5 bg-zinc-50/50">
           <div className="flex items-center gap-1 px-2 pt-2">
@@ -362,8 +412,8 @@ function NegotiationCard({
                 fallbackAskPrice={summary.product.askPrice}
                 finalPrice={summary.finalPrice}
                 canAccept={canAccept}
-                accepting={accepting}
-                acceptError={acceptError}
+                accepting={actionState === "accepting"}
+                acceptError={actionError}
                 onAccept={handleAccept}
               />
             ) : loading && !detail ? (

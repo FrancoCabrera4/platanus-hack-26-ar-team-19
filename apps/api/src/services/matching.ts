@@ -36,6 +36,7 @@ interface ProductCandidate {
 }
 
 const DEFAULT_MIN_VECTOR_SIMILARITY = 0.3;
+const DEFAULT_MIN_LLM_MATCH_SCORE = 0.5;
 const MAX_CANDIDATES = 25;
 const FALLBACK_VECTOR_CANDIDATES = 10;
 const STOP_WORDS = new Set([
@@ -55,6 +56,12 @@ const STOP_WORDS = new Set([
 function minVectorSimilarity(): number {
   const configured = Number.parseFloat(process.env.MIN_MATCH_SIMILARITY ?? "");
   if (!Number.isFinite(configured)) return DEFAULT_MIN_VECTOR_SIMILARITY;
+  return Math.min(Math.max(configured, 0), 1);
+}
+
+function minLlmMatchScore(): number {
+  const configured = Number.parseFloat(process.env.MIN_LLM_MATCH_SCORE ?? "");
+  if (!Number.isFinite(configured)) return DEFAULT_MIN_LLM_MATCH_SCORE;
   return Math.min(Math.max(configured, 0), 1);
 }
 
@@ -123,11 +130,13 @@ export async function findMatches(
 
   if (candidates.length === 0) return [];
   if (candidates.length === 1) {
-    return candidates.map((candidate) => ({
-      productId: candidate.id,
-      score: candidate.similarity,
+    const only = candidates[0]!;
+    if (only.similarity < minLlmMatchScore()) return [];
+    return [{
+      productId: only.id,
+      score: only.similarity,
       rationale: "Only candidate above the semantic similarity threshold.",
-    }));
+    }];
   }
 
   // Step 2: LLM text re-rank
@@ -175,8 +184,10 @@ export async function findMatches(
   }
 
   const validIds = new Set(candidates.map((c) => c.id));
+  const minScore = minLlmMatchScore();
   let textRanked = scored.matches
     .filter((m) => validIds.has(m.productId))
+    .filter((m) => m.score >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, Math.max(topN * 2, 6));
 

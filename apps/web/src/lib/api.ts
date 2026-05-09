@@ -278,6 +278,10 @@ export async function acceptNegotiation(id: string): Promise<NegotiationDetail> 
   });
 }
 
+export async function rejectNegotiation(id: string): Promise<NegotiationSummary> {
+  return apiFetch<NegotiationSummary>(`/negotiations/${id}/reject`, { method: "POST" });
+}
+
 export async function getJob(id: string): Promise<JobDetail> {
   return apiFetch<JobDetail>(`/jobs/${id}`);
 }

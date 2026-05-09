@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
+  acceptNegotiation,
   getMe,
   getConversation,
   getNegotiation,
@@ -10,6 +11,7 @@ import {
   listConversations,
   listProducts,
   logout,
+  rejectNegotiation,
   startConversation,
   streamMessage,
   transcribeAudio,
@@ -20,7 +22,7 @@ import {
   type Product,
 } from "@/lib/api";
 
-type NegStatus = "accepted" | "rejected" | "running" | "pending" | "timed_out" | "error" | null;
+type NegStatus = "accepted" | "rejected" | "running" | "pending" | "awaiting_buyer" | "timed_out" | "error" | null;
 
 type Tile = {
   id: string;
@@ -111,6 +113,9 @@ export default function ExplorePage() {
   const animFrameRef = useRef<number>(0);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [activeNeg, setActiveNeg] = useState<NegotiationDetail | null>(null);
+  const [pendingDealNegId, setPendingDealNegId] = useState<string | null>(null);
+  const [dismissedDeals, setDismissedDeals] = useState<Set<string>>(new Set());
+  const [successDeal, setSuccessDeal] = useState<{ title: string; finalPrice: number; imageUrl?: string } | null>(null);
   const chatOpen = messages.length > 0;
   const visibleProducts = useMemo(
     () => products.slice(0, visibleProductCount),
@@ -226,6 +231,8 @@ export default function ExplorePage() {
             reportedNegotiationStates.set(neg.id, stateKey);
             if (neg.status === "accepted" && neg.finalPrice != null) {
               setSearchStatus(`Trato cerrado: "${product.title}" a ${formatARS(neg.finalPrice)}`);
+            } else if (neg.status === "awaiting_buyer") {
+              setSearchStatus(`Acuerdo pendiente: "${product.title}" a ${formatARS(neg.finalPrice ?? 0)}`);
             } else if (neg.status === "rejected" || neg.status === "timed_out" || neg.status === "error") {
               setSearchStatus(`"${product.title}" — sin acuerdo, buscando más...`);
             } else if (neg.status === "running") {
@@ -267,6 +274,34 @@ export default function ExplorePage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const pendingDeals = useMemo(() => {
+    const eligible = searchTiles.filter(
+      (t) =>
+        t.negStatus === "awaiting_buyer" &&
+        t.negId != null &&
+        t.finalPrice != null &&
+        !dismissedDeals.has(t.negId),
+    );
+    return eligible.sort((a, b) => {
+      const aDrop = a.askPrice && a.finalPrice ? (a.askPrice - a.finalPrice) / a.askPrice : 0;
+      const bDrop = b.askPrice && b.finalPrice ? (b.askPrice - b.finalPrice) / b.askPrice : 0;
+      return bDrop - aDrop;
+    });
+  }, [searchTiles, dismissedDeals]);
+
+  useEffect(() => {
+    if (pendingDealNegId) {
+      // Si la selección actual ya no está pendiente, saltar al mejor.
+      if (!pendingDeals.some((d) => d.negId === pendingDealNegId)) {
+        setPendingDealNegId(pendingDeals[0]?.negId ?? null);
+      }
+      return;
+    }
+    if (pendingDeals.length > 0) {
+      setPendingDealNegId(pendingDeals[0]!.negId!);
+    }
+  }, [pendingDeals, pendingDealNegId]);
 
   useEffect(() => {
     const marker = loadMoreRef.current;
@@ -698,6 +733,16 @@ export default function ExplorePage() {
         {tiles.map((item, i) => (
           <div
             key={item.id}
+            onClick={() => {
+              if (item.negStatus === "awaiting_buyer" && item.negId) {
+                setDismissedDeals((prev) => {
+                  const next = new Set(prev);
+                  next.delete(item.negId!);
+                  return next;
+                });
+                setPendingDealNegId(item.negId);
+              }
+            }}
             className="mb-3 break-inside-avoid cursor-pointer group animate-msg-in transition-transform duration-300 ease-out hover:scale-[1.03] hover:-translate-y-1"
             style={{ animationDelay: searching ? `${i * 0.15}s` : "0s" }}
           >
@@ -718,6 +763,11 @@ export default function ExplorePage() {
               {item.negStatus === "rejected" && (
                 <span className="absolute top-2 left-2 bg-destructive text-destructive-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
                   Sin acuerdo
+                </span>
+              )}
+              {item.negStatus === "awaiting_buyer" && (
+                <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                  Tu confirmación
                 </span>
               )}
               {(item.negStatus === "running" || item.negStatus === "pending") && (
@@ -1131,6 +1181,69 @@ export default function ExplorePage() {
 
       </div>
 
+      {/* Confirm deal modal */}
+      {pendingDealNegId && pendingDeals.length > 0 && (
+        <ConfirmDealModal
+          deals={pendingDeals}
+          currentNegId={pendingDealNegId}
+          onSelect={(id) => setPendingDealNegId(id)}
+          onAccept={async (acceptedId) => {
+            const accepted = pendingDeals.find((d) => d.negId === acceptedId);
+            const others = pendingDeals.filter((d) => d.negId !== acceptedId).map((d) => d.negId!);
+            await acceptNegotiation(acceptedId);
+            await Promise.allSettled(others.map((oid) => rejectNegotiation(oid)));
+            setSearchTiles((prev) =>
+              prev.map((t) => {
+                if (t.negId === acceptedId) return { ...t, negStatus: "accepted" as NegStatus };
+                if (t.negId && others.includes(t.negId)) return { ...t, negStatus: "rejected" as NegStatus };
+                return t;
+              }),
+            );
+            setPendingDealNegId(null);
+            if (accepted?.finalPrice != null) {
+              setSuccessDeal({
+                title: accepted.title,
+                finalPrice: accepted.finalPrice,
+                imageUrl: accepted.imageUrl,
+              });
+            }
+          }}
+          onReject={async (rejectedId) => {
+            const rejected = pendingDeals.find((d) => d.negId === rejectedId);
+            await rejectNegotiation(rejectedId);
+            setSearchTiles((prev) =>
+              prev.map((t) =>
+                t.negId === rejectedId ? { ...t, negStatus: "rejected" as NegStatus } : t,
+              ),
+            );
+            setPendingDealNegId(null); // useEffect re-elige el siguiente mejor.
+            if (rejected) {
+              setMessages((prev) => [
+                ...prev,
+                { role: "assistant", content: `Rechazaste el acuerdo de "${rejected.title}".` },
+              ]);
+            }
+          }}
+          onDismiss={() => {
+            setDismissedDeals((prev) => new Set(prev).add(pendingDealNegId));
+            setPendingDealNegId(null);
+          }}
+        />
+      )}
+
+      {/* Success overlay */}
+      {successDeal && (
+        <SuccessDealOverlay
+          title={successDeal.title}
+          finalPrice={successDeal.finalPrice}
+          imageUrl={successDeal.imageUrl}
+          onHome={() => {
+            setSuccessDeal(null);
+            handleNewChat();
+          }}
+        />
+      )}
+
       {/* Lightbox */}
       {lightboxSrc && (
         <div
@@ -1145,6 +1258,300 @@ export default function ExplorePage() {
           />
         </div>
       )}
+    </div>
+  );
+}
+
+function ConfirmDealModal({
+  deals,
+  currentNegId,
+  onSelect,
+  onAccept,
+  onReject,
+  onDismiss,
+}: {
+  deals: Tile[];
+  currentNegId: string;
+  onSelect: (negId: string) => void;
+  onAccept: (negId: string) => Promise<void>;
+  onReject: (negId: string) => Promise<void>;
+  onDismiss: () => void;
+}) {
+  const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const idx = Math.max(0, deals.findIndex((d) => d.negId === currentNegId));
+  const tile = deals[idx] ?? deals[0]!;
+  const total = deals.length;
+  const isBest = idx === 0;
+  const busy = actionState !== "idle";
+
+  const askPrice = tile.askPrice ?? 0;
+  const finalPrice = tile.finalPrice ?? 0;
+  const dropPct = askPrice > 0 ? Math.round(((askPrice - finalPrice) / askPrice) * 100) : 0;
+  const savings = askPrice > 0 ? askPrice - finalPrice : 0;
+
+  const handle = async (kind: "accepting" | "rejecting", fn: () => Promise<void>) => {
+    setActionError(null);
+    setActionState(kind);
+    try {
+      await fn();
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setActionState("idle");
+    }
+  };
+
+  const goPrev = () => {
+    if (busy) return;
+    const next = deals[(idx - 1 + total) % total];
+    if (next?.negId) onSelect(next.negId);
+  };
+  const goNext = () => {
+    if (busy) return;
+    const next = deals[(idx + 1) % total];
+    if (next?.negId) onSelect(next.negId);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+      onClick={() => { if (!busy) onDismiss(); }}
+    >
+      <div
+        className="relative w-full max-w-md rounded-3xl bg-white shadow-2xl animate-scale-in overflow-hidden border border-black/5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={busy}
+          className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full liquid-glass flex items-center justify-center hover:scale-105 transition-transform disabled:opacity-50"
+          aria-label="Cerrar"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/70">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+
+        <div className="relative">
+          {tile.imageUrl ? (
+            <img src={tile.imageUrl} alt={tile.title} className="w-full max-h-72 object-cover" />
+          ) : (
+            <div className="w-full h-56" style={{ backgroundColor: tile.color }} />
+          )}
+          {isBest && total > 1 && (
+            <span className="absolute top-3 left-3 inline-flex items-center gap-1 rounded-full bg-primary/95 text-primary-foreground text-[10px] font-bold px-2.5 py-1 shadow-md">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="12 2 15 9 22 9.5 17 14.5 18.5 22 12 18 5.5 22 7 14.5 2 9.5 9 9" />
+              </svg>
+              Mejor acuerdo
+            </span>
+          )}
+          {dropPct > 0 && (
+            <span className="absolute bottom-3 left-3 inline-flex items-center rounded-full bg-accent text-accent-foreground text-xs font-bold px-2.5 py-1 shadow-md">
+              -{dropPct}%
+            </span>
+          )}
+        </div>
+
+        <div className="p-5 space-y-4">
+          {total > 1 && (
+            <div className="flex items-center justify-between -mt-1">
+              <button
+                type="button"
+                onClick={goPrev}
+                disabled={busy}
+                className="w-8 h-8 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors disabled:opacity-40"
+                aria-label="Anterior acuerdo"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/60">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                Acuerdo {idx + 1} de {total}
+              </p>
+              <button
+                type="button"
+                onClick={goNext}
+                disabled={busy}
+                className="w-8 h-8 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors disabled:opacity-40"
+                aria-label="Siguiente acuerdo"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/60">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">Tu agente cerró un acuerdo</p>
+            <h2
+              className="mt-1 text-2xl text-foreground leading-tight"
+              style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}
+            >
+              {tile.title}
+            </h2>
+          </div>
+
+          <div className="rounded-2xl bg-muted/60 p-4 space-y-1">
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs text-muted-foreground">Precio acordado</span>
+              <span
+                className="text-3xl text-accent"
+                style={{ fontFamily: "var(--font-heading)", fontStyle: "italic", fontWeight: 600 }}
+              >
+                {formatARS(finalPrice)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Pedido original</span>
+              <span className="text-foreground/60 line-through">{formatARS(askPrice)}</span>
+            </div>
+            {savings > 0 && (
+              <p className="pt-1 text-xs text-accent font-medium text-right">
+                Ahorrás {formatARS(savings)}
+              </p>
+            )}
+          </div>
+
+          {total > 1 && (
+            <p className="text-xs text-muted-foreground">
+              Hay {total} acuerdos pendientes. Si aceptás éste, los demás se cancelan automáticamente.
+            </p>
+          )}
+
+          {actionError && (
+            <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
+              No pudimos guardar tu respuesta: {actionError}
+            </p>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => handle("rejecting", () => onReject(tile.negId!))}
+              disabled={busy}
+              className="flex-1 rounded-2xl border border-border bg-white px-4 py-3 text-sm font-medium text-foreground/70 hover:bg-muted disabled:opacity-60 transition-colors"
+            >
+              {actionState === "rejecting" ? "Rechazando…" : "No aceptar"}
+            </button>
+            <button
+              type="button"
+              onClick={() => handle("accepting", () => onAccept(tile.negId!))}
+              disabled={busy}
+              className="flex-1 rounded-2xl bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground hover:bg-accent/90 disabled:opacity-60 transition-colors shadow-md"
+            >
+              {actionState === "accepting" ? "Cerrando…" : "Aceptar trato"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SuccessDealOverlay({
+  title,
+  finalPrice,
+  imageUrl,
+  onHome,
+}: {
+  title: string;
+  finalPrice: number;
+  imageUrl?: string;
+  onHome: () => void;
+}) {
+  const [countdown, setCountdown] = useState(6);
+
+  useEffect(() => {
+    if (countdown <= 0) {
+      onHome();
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, onHome]);
+
+  // Confetti pieces — generated once.
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 28 }).map((_, i) => ({
+        left: Math.random() * 100,
+        delay: Math.random() * 0.5,
+        duration: 2 + Math.random() * 2,
+        rotate: Math.random() * 360,
+        color: i % 3 === 0 ? "hsl(38 92% 50%)" : i % 3 === 1 ? "hsl(152 69% 40%)" : "hsl(45 93% 58%)",
+        size: 6 + Math.random() * 8,
+      })),
+    [],
+  );
+
+  return (
+    <div className="fixed inset-0 z-[110] bg-background/95 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in overflow-hidden">
+      {/* Confetti */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {pieces.map((p, i) => (
+          <span
+            key={i}
+            className="absolute -top-4 block rounded-sm"
+            style={{
+              left: `${p.left}%`,
+              width: p.size,
+              height: p.size * 0.4,
+              backgroundColor: p.color,
+              transform: `rotate(${p.rotate}deg)`,
+              animation: `confetti-fall ${p.duration}s ${p.delay}s ease-in forwards`,
+            }}
+          />
+        ))}
+      </div>
+
+      <div className="relative w-full max-w-md rounded-3xl bg-white shadow-2xl border border-black/5 overflow-hidden animate-scale-in">
+        <div className="px-6 pt-8 pb-6 text-center">
+          <div className="mx-auto w-20 h-20 rounded-full bg-accent text-accent-foreground flex items-center justify-center shadow-lg animate-scale-in">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <p className="mt-5 text-[11px] uppercase tracking-wider text-accent font-semibold">¡Trato cerrado!</p>
+          <h2
+            className="mt-2 text-3xl text-foreground leading-tight"
+            style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}
+          >
+            ¡Felicitaciones!
+          </h2>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Compraste <span className="font-medium text-foreground">{title}</span> por
+          </p>
+          <p
+            className="mt-1 text-4xl text-accent"
+            style={{ fontFamily: "var(--font-heading)", fontStyle: "italic", fontWeight: 600 }}
+          >
+            {formatARS(finalPrice)}
+          </p>
+        </div>
+
+        {imageUrl && (
+          <div className="px-6 pb-4">
+            <img src={imageUrl} alt={title} className="w-full max-h-44 object-cover rounded-2xl" />
+          </div>
+        )}
+
+        <div className="px-6 pb-6">
+          <button
+            type="button"
+            onClick={onHome}
+            className="w-full rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-md"
+          >
+            Volver al inicio {countdown > 0 && <span className="opacity-70">· {countdown}s</span>}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
