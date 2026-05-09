@@ -9,6 +9,7 @@ import { conversationsRouter } from "./routes/conversations";
 import { productsRouter } from "./routes/products";
 import { searchesRouter } from "./routes/searches";
 import { negotiationsRouter } from "./routes/negotiations";
+import { shippingRouter } from "./routes/shipping";
 import { jobsRouter } from "./routes/jobs";
 import { authRouter } from "./routes/auth";
 import { uploadsDir, uploadsRouter } from "./routes/uploads";
@@ -34,6 +35,7 @@ export const createServer = (): Express => {
     .use("/products", productsRouter)
     .use("/searches", searchesRouter)
     .use("/negotiations", negotiationsRouter)
+    .use("/shipping", shippingRouter)
     .use("/jobs", jobsRouter)
     .use("/uploads", uploadsRouter);
 

@@ -6,6 +6,46 @@ export const negotiationsRouter: RouterType = Router();
 
 negotiationsRouter.use(requireAuth);
 
+negotiationsRouter.get("/", async (_req, res) => {
+  const user = res.locals.user as AuthUser;
+  const negotiations = await prisma.negotiation.findMany({
+    where: {
+      OR: [{ buyerId: user.id }, { sellerId: user.id }],
+      status: { in: ["awaiting_buyer", "accepted"] },
+    },
+    include: {
+      buyer: { select: { id: true, name: true, email: true } },
+      seller: { select: { id: true, name: true, email: true } },
+      product: {
+        select: {
+          id: true,
+          title: true,
+          askPrice: true,
+          imageUrl: true,
+          category: true,
+        },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  return res.json(
+    negotiations.map((neg) => ({
+      id: neg.id,
+      role: neg.buyerId === user.id ? "buyer" : "seller",
+      status: neg.status,
+      successful: neg.successful,
+      finalPrice: neg.finalPrice,
+      reason: neg.reason,
+      completedAt: neg.completedAt,
+      updatedAt: neg.updatedAt,
+      buyer: neg.buyer,
+      seller: neg.seller,
+      product: neg.product,
+    })),
+  );
+});
+
 negotiationsRouter.get("/:id", async (req, res) => {
   const user = res.locals.user as AuthUser;
   const neg = await prisma.negotiation.findUnique({

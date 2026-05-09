@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   acceptNegotiation,
   ApiError,
@@ -298,6 +298,7 @@ function NegotiationCard({
   maxPrice: number;
   onAfterAction: () => Promise<unknown> | unknown;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"product" | "chat">("product");
   const [detail, setDetail] = useState<NegotiationDetail | null>(null);
@@ -319,6 +320,7 @@ function NegotiationCard({
     try {
       await acceptNegotiation(summary.id);
       await onAfterAction();
+      router.push("/dashboard");
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "error";
       setActionError(

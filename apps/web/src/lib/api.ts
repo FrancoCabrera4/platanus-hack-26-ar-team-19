@@ -217,6 +217,32 @@ export type NegotiationSummary = {
   product: { id: string; title: string; askPrice: number; imageUrl: string | null };
 };
 
+export type DashboardDeal = {
+  id: string;
+  role: "buyer" | "seller";
+  status: string;
+  successful: boolean;
+  finalPrice: number | null;
+  reason: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+  buyer: { id: string; name: string; email: string };
+  seller: { id: string; name: string; email: string };
+  product: {
+    id: string;
+    title: string;
+    askPrice: number;
+    imageUrl: string | null;
+    category: string | null;
+  };
+};
+
+export type ShippingSuggestion = {
+  midpointLabel: string;
+  rationale: string;
+  meetingTips: string[];
+};
+
 export type SearchDetail = {
   id: string;
   query: string;
@@ -271,6 +297,21 @@ export async function getProduct(id: string): Promise<Product> {
 
 export async function getNegotiation(id: string): Promise<NegotiationDetail> {
   return apiFetch<NegotiationDetail>(`/negotiations/${id}`);
+}
+
+export async function listDashboardDeals(): Promise<DashboardDeal[]> {
+  return apiFetch<DashboardDeal[]>("/negotiations");
+}
+
+export async function suggestShipping(input: {
+  negotiationId: string;
+  buyerLocation: string;
+  sellerLocation: string;
+}): Promise<ShippingSuggestion> {
+  return apiFetch<ShippingSuggestion>("/shipping/suggest", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function acceptNegotiation(id: string): Promise<NegotiationSummary> {

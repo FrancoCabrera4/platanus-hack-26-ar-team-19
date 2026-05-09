@@ -1666,7 +1666,7 @@ export default function ExplorePage() {
           imageUrl={successDeal.imageUrl}
           onHome={() => {
             setSuccessDeal(null);
-            handleNewChat();
+            router.push("/dashboard");
           }}
         />
       )}
@@ -2064,7 +2064,7 @@ function SuccessDealOverlay({
             onClick={onHome}
             className="w-full rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-md"
           >
-            Volver al inicio{" "}
+            Gestionar envio{" "}
             {countdown > 0 && (
               <span className="opacity-70">· {countdown}s</span>
             )}
