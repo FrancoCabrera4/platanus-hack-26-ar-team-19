@@ -126,7 +126,6 @@ export async function startConversation(mode: ConversationMode) {
 export async function streamMessage(
   conversationId: string,
   content: string,
-  imageUrl: string | undefined,
   onChunk: (text: string) => void,
   onDone: (data: { state: unknown; searchId?: string; productId?: string; jobId?: string; suggestions?: string[] }) => void,
   onError: (error: string) => void,

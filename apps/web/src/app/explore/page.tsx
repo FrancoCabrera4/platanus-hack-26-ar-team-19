@@ -485,7 +485,6 @@ export default function ExplorePage() {
       await streamMessage(
         convId,
         text,
-        mode === "posting_product" ? imageUrl : undefined,
         (chunk) => appendToLastAssistant(chunk),
         (data) => {
           if (data.suggestions?.length) setSuggestions(data.suggestions);
