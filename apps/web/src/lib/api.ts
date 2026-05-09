@@ -216,6 +216,7 @@ export type Listing = {
   condition: string | null;
   askPrice: number;
   maxPrice: number | null;
+  imageUrl: string | null;
   status: string;
   createdAt: string;
 };

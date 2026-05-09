@@ -20,6 +20,7 @@ type Tile = {
   id: string;
   title: string;
   askPrice?: number;
+  imageUrl?: string | null;
   h: number;
   color: string;
 };
@@ -53,6 +54,7 @@ function listingsToTiles(listings: Listing[]): Tile[] {
     id: l.id,
     title: l.title,
     askPrice: l.askPrice,
+    imageUrl: l.imageUrl,
     h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
     color: TILE_COLORS[i % TILE_COLORS.length]!,
   }));
@@ -315,7 +317,20 @@ export default function ExplorePage() {
             <div
               className="rounded-xl overflow-hidden"
               style={{ height: item.h, backgroundColor: item.color }}
-            />
+            >
+              {item.imageUrl && (
+                <img
+                  src={item.imageUrl}
+                  alt={item.title}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                  className="h-full w-full object-cover"
+                />
+              )}
+            </div>
             <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
               {item.title}
             </p>
