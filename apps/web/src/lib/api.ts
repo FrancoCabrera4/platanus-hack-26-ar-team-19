@@ -275,11 +275,10 @@ export type JobDetail = {
   result: unknown;
 };
 
-export async function listListings(limit = 40): Promise<Listing[]> {
+export async function listListings(): Promise<Listing[]> {
   const res = await fetch(`${API_URL}/listings?status=active`);
   if (!res.ok) return [];
-  const all = (await res.json()) as Listing[];
-  return all.slice(0, limit);
+  return (await res.json()) as Listing[];
 }
 
 export async function getSearch(id: string): Promise<SearchDetail> {

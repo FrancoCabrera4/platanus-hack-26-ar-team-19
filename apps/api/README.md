@@ -5,7 +5,7 @@ Backend + AI for an agentic marketplace. Sellers describe their item to an LLM-p
 ## Stack
 
 - Express + TypeScript (`apps/api`)
-- Prisma + SQLite (`packages/db`)
+- Prisma + PostgreSQL (`packages/db`, local DB via Docker Compose)
 - OpenAI via `openai` or Gemini via `@google/generative-ai`
 - Async background jobs via in-process queue (Job rows persisted to DB)
 
@@ -15,12 +15,12 @@ Backend + AI for an agentic marketplace. Sellers describe their item to an LLM-p
    ```bash
    pnpm install
    ```
-2. **Create the SQLite DB** (one-time):
+2. **Start PostgreSQL and sync the Prisma schema** (one-time, from repo root):
    ```bash
-   cd packages/db
-   echo 'DATABASE_URL="file:./dev.db"' > .env
-   pnpm exec prisma db push --skip-generate
-   pnpm exec prisma generate
+   cp .env.example .env
+   cp packages/db/.env.example packages/db/.env
+   pnpm db:up
+   pnpm db:setup
    ```
 3. **Configure `apps/api/.env`** (copy from `.env.example`):
    ```bash
@@ -30,11 +30,7 @@ Backend + AI for an agentic marketplace. Sellers describe their item to an LLM-p
    #   LLM_PROVIDER=openai or gemini
    #   OPENAI_API_KEY=...your key from https://platform.openai.com/api-keys
    #   GEMINI_API_KEY=...your key from https://aistudio.google.com/app/apikey
-   #   DATABASE_URL=file:/absolute/path/to/repo/packages/db/prisma/dev.db
-   ```
-   Quick way to get the absolute path:
-   ```bash
-   echo "DATABASE_URL=file:$(cd ../../packages/db/prisma && pwd)/dev.db" >> .env
+   #   DATABASE_URL=postgresql://marketplace:marketplace@localhost:5432/marketplace?schema=public
    ```
 4. **Seed demo data** (optional, lets you skip the onboarding chats):
    ```bash

@@ -1,12 +1,12 @@
 // Prisma schema for the agentic marketplace.
-// SQLite for hackathon speed; same Prisma codegen as Postgres.
+// PostgreSQL is the backing store for local development and production-like runs.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

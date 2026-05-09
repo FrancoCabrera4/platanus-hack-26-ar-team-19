@@ -46,9 +46,10 @@ pnpm build  # tsup build
 
 ### Database (packages/db)
 
-Prisma with SQLite (file at `packages/db/prisma/dev.db`). Requires `DATABASE_URL` env var. Use an absolute path so the seed scripts and the API process resolve the same file regardless of cwd.
+Prisma with PostgreSQL. The local database runs through Docker Compose at the monorepo root and requires `DATABASE_URL=postgresql://marketplace:marketplace@localhost:5432/marketplace?schema=public`.
 
 ```bash
+pnpm db:up                         # docker compose up -d postgres
 pnpm --filter api db:setup       # prisma db push + generate
 pnpm --filter @repo/db db:push
 pnpm --filter @repo/db db:generate

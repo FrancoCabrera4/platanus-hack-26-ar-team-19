@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   ApiError,
@@ -48,15 +48,16 @@ const TILE_COLORS = [
   "hsl(220 14% 90%)",
   "hsl(220 14% 92%)",
 ];
+const LISTINGS_PAGE_SIZE = 40;
 
-function listingsToTiles(listings: Listing[]): Tile[] {
+function listingsToTiles(listings: Listing[], offset = 0): Tile[] {
   return listings.map((l, i) => ({
     id: l.id,
     title: l.title,
     askPrice: l.askPrice,
     imageUrl: l.imageUrl,
-    h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
-    color: TILE_COLORS[i % TILE_COLORS.length]!,
+    h: TILE_HEIGHTS[(offset + i) % TILE_HEIGHTS.length]!,
+    color: TILE_COLORS[(offset + i) % TILE_COLORS.length]!,
   }));
 }
 
@@ -85,10 +86,18 @@ export default function ExplorePage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [verificationToken, setVerificationToken] = useState("");
   const [devToken, setDevToken] = useState<string | null>(null);
-  const [tiles, setTiles] = useState<Tile[]>(FALLBACK_TILES);
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [visibleListingCount, setVisibleListingCount] = useState(LISTINGS_PAGE_SIZE);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const chatOpen = messages.length > 0;
+  const visibleListings = useMemo(
+    () => listings.slice(0, visibleListingCount),
+    [listings, visibleListingCount],
+  );
+  const tiles = listings.length > 0 ? listingsToTiles(visibleListings) : FALLBACK_TILES;
+  const hasMoreListings = visibleListingCount < listings.length;
 
   useEffect(() => {
     getMe()
@@ -104,9 +113,10 @@ export default function ExplorePage() {
   }, [router]);
 
   const refreshListings = useCallback(() => {
-    listListings(40)
-      .then((listings) => {
-        if (listings.length > 0) setTiles(listingsToTiles(listings));
+    listListings()
+      .then((nextListings) => {
+        setListings(nextListings);
+        setVisibleListingCount(LISTINGS_PAGE_SIZE);
       })
       .catch(() => {
         // keep fallback tiles
@@ -127,6 +137,22 @@ export default function ExplorePage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    const marker = loadMoreRef.current;
+    if (!marker || !hasMoreListings) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setVisibleListingCount((count) => Math.min(count + LISTINGS_PAGE_SIZE, listings.length));
+      },
+      { rootMargin: "600px 0px" },
+    );
+
+    observer.observe(marker);
+    return () => observer.disconnect();
+  }, [hasMoreListings, listings.length, visibleListingCount]);
 
   async function handleLogout() {
     await logout();
@@ -311,7 +337,9 @@ export default function ExplorePage() {
         </div>
       )}
 
-      <div className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28">
+      <div
+        className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-4"
+      >
         {tiles.map((item) => (
           <div key={item.id} className="mb-3 break-inside-avoid cursor-pointer group">
             <div
@@ -340,6 +368,12 @@ export default function ExplorePage() {
           </div>
         ))}
       </div>
+
+      {listings.length > LISTINGS_PAGE_SIZE && (
+        <div ref={loadMoreRef} className="px-4 pb-32 pt-2 text-center text-xs text-muted-foreground">
+          {hasMoreListings ? `Mostrando ${visibleListings.length} de ${listings.length}` : "No hay más publicaciones"}
+        </div>
+      )}
 
       {/* Chat container */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4 flex flex-col items-stretch">

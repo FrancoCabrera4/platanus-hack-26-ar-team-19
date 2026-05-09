@@ -20,7 +20,8 @@ pnpm build
 pnpm lint
 pnpm type-check
 
-# Database (Prisma + SQLite). The schema lives in packages/db/prisma/schema.prisma.
+# Database (Prisma + PostgreSQL via Docker). The schema lives in packages/db/prisma/schema.prisma.
+pnpm db:up                    # docker compose up -d postgres
 # Shortcut from the API package:
 pnpm --filter api db:setup       # prisma db push + prisma generate
 # Or directly:
@@ -41,14 +42,16 @@ There is no test runner configured. `@repo/db`'s `test` script is a placeholder 
 
 ## Environment
 
-Two env files matter:
+Three env files matter:
 
-- **Repo root `.env`**: only `DATABASE_URL=file:/dev.db` for Prisma codegen at the workspace root.
-- **`apps/api/.env`**: needs `LLM_PROVIDER=openai|gemini`, the matching API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`), and an absolute-path `DATABASE_URL`. If `LLM_PROVIDER` is omitted, the API uses OpenAI when `OPENAI_API_KEY` is set and otherwise Gemini. The absolute path matters because the API process and the Prisma CLI run from different cwds — a relative `file:./dev.db` resolves differently in each.
+- **Repo root `.env`**: `DATABASE_URL=postgresql://marketplace:marketplace@localhost:5432/marketplace?schema=public`.
+- **`packages/db/.env`**: same `DATABASE_URL`, used when running Prisma commands from the db package.
+- **`apps/api/.env`**: needs `LLM_PROVIDER=openai|gemini`, the matching API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`), and the same `DATABASE_URL`. If `LLM_PROVIDER` is omitted, the API uses OpenAI when `OPENAI_API_KEY` is set and otherwise Gemini.
 
 ```bash
-# In apps/api/.env, generate the absolute DB path with:
-echo "DATABASE_URL=file:$(cd ../../packages/db/prisma && pwd)/dev.db" >> .env
+cp .env.example .env
+cp packages/db/.env.example packages/db/.env
+cp apps/api/.env.example apps/api/.env
 ```
 
 ## Architecture
@@ -57,7 +60,7 @@ echo "DATABASE_URL=file:$(cd ../../packages/db/prisma && pwd)/dev.db" >> .env
 
 - `apps/api` — Express + TypeScript backend, all the agent/negotiation logic. Built with `tsup` (CJS).
 - `apps/web` — Next.js 14 app. Currently a stock scaffold; treat as a placeholder.
-- `packages/db` — Prisma client singleton + schema. Exports `prisma` as default. SQLite for hackathon speed; same Prisma codegen would target Postgres.
+- `packages/db` — Prisma client singleton + schema. Exports `prisma` as default. PostgreSQL is available locally through Docker Compose.
 - `packages/logger` — thin `log()` wrapper.
 - `packages/ui` — shadcn-style React components, Tailwind. Used by web; some types pulled in by API as a dev dep.
 - `packages/config-eslint`, `config-tailwind`, `config-typescript` — shared configs (`@repo/*`).
