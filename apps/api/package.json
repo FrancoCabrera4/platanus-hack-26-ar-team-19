@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "seed": "tsx src/seed.ts",
+    "scrape:fb": "tsx src/scripts/scrape-fb-marketplace.ts",
+    "seed:fb": "tsx src/scripts/seed-from-fb.ts",
     "db:setup": "pnpm --filter @repo/db exec prisma db push --skip-generate && pnpm --filter @repo/db exec prisma generate"
   },
   "dependencies": {
@@ -35,6 +37,7 @@
     "@types/morgan": "^1.9.9",
     "@types/node": "^20.11.24",
     "@types/uuid": "^11.0.0",
+    "playwright": "^1.48.0",
     "prisma": "^5.14.0",
     "tsup": "^8.0.2",
     "tsx": "^4.21.0",

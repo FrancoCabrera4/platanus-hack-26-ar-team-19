@@ -39,3 +39,6 @@ yarn-error.log*
 
 # ui
 dist/
+
+# scraper output
+apps/api/data/
