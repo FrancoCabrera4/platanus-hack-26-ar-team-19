@@ -74,6 +74,7 @@ model Listing {
   askPrice       Float
   minPrice       Float
   maxPrice       Float?
+  imageUrl       String?
   strategyNotes  String?
   status         String   @default("active") // active | sold | withdrawn
   createdAt      DateTime @default(now())

@@ -155,7 +155,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             className="text-lg tracking-tight"
             style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}
           >
-            AgentMarket
+            negocIA
           </p>
         </Link>
         <div className="w-8 h-8 rounded-full bg-foreground flex items-center justify-center cursor-pointer">

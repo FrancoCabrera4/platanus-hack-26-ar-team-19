@@ -8,7 +8,6 @@ export const usersRouter: RouterType = Router();
 const CreateUser = z.object({
   name: z.string().min(1),
   email: z.string().email(),
-  role: z.enum(["seller", "buyer", "both"]),
 });
 
 usersRouter.post("/", async (req, res) => {
@@ -21,7 +20,7 @@ usersRouter.post("/", async (req, res) => {
     return res.status(200).json(publicUser(existing));
   }
   const user = await prisma.user.create({
-    data: { ...parsed.data, emailVerifiedAt: new Date() },
+    data: { ...parsed.data, role: "both", emailVerifiedAt: new Date() },
   });
   return res.status(201).json(publicUser(user));
 });

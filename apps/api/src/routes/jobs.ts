@@ -1,10 +1,10 @@
 import { Router, type Router as RouterType } from "express";
 import prisma from "@repo/db";
-import { requireAuth, requireVerifiedEmail, type AuthUser } from "../auth";
+import { requireAuth, type AuthUser } from "../auth";
 
 export const jobsRouter: RouterType = Router();
 
-jobsRouter.use(requireAuth, requireVerifiedEmail);
+jobsRouter.use(requireAuth);
 
 jobsRouter.get("/:id", async (req, res) => {
   const user = res.locals.user as AuthUser;

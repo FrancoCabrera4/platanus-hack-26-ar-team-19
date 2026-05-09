@@ -115,6 +115,7 @@ async function main() {
       minPrice,
       maxPrice,
       strategyNotes: null,
+      imageUrl: item.imageUrl,
     };
   });
 
