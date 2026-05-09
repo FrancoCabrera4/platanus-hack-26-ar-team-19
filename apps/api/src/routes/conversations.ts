@@ -22,7 +22,10 @@ export const conversationsRouter: RouterType = Router();
 
 const ConversationMode = z.enum(["buying", "posting_product"]);
 const StartConversation = z.object({ mode: ConversationMode });
-const PostMessage = z.object({ content: z.string().min(1) });
+const PostMessage = z.object({
+  content: z.string().min(1),
+  imageUrl: z.string().min(1).optional(),
+});
 
 type ConversationMode = z.infer<typeof ConversationMode>;
 type ConversationMessageRow = { role: string; content: string };
@@ -120,7 +123,8 @@ async function completeConversation(
       !productState.title ||
       !productState.description ||
       !productState.askPrice ||
-      !productState.negotiationStrategy
+      !productState.negotiationStrategy ||
+      !productState.imageUrl
     ) {
       return {};
     }
@@ -135,6 +139,7 @@ async function completeConversation(
         condition: productState.condition ?? null,
         askPrice: productState.askPrice,
         negotiationStrategy: productState.negotiationStrategy,
+        imageUrl: productState.imageUrl,
       },
     });
 
@@ -265,7 +270,11 @@ conversationsRouter.post("/:id/messages", asyncHandler(async (req, res) => {
     buildHistory(conversation.messages, parsed.data.content),
     state,
   );
-  const merged = { ...state, ...turn.state };
+  const merged = {
+    ...state,
+    ...turn.state,
+    ...(conversation.mode === "posting_product" && parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
+  };
 
   await prisma.conversationMessage.createMany({
     data: [
@@ -314,7 +323,11 @@ conversationsRouter.post("/:id/messages/stream", asyncHandler(async (req, res) =
       state,
       (chunk) => sseSend(res, { chunk }),
     );
-    const merged = { ...state, ...turn.state };
+    const merged = {
+      ...state,
+      ...turn.state,
+      ...(conversation.mode === "posting_product" && parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
+    };
 
     await prisma.conversationMessage.createMany({
       data: [
