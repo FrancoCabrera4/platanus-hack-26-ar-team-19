@@ -14,7 +14,13 @@ interface ScoringInput {
   query: string;
   requirements?: string | null;
   category?: string | null;
-  candidates: { id: string; title: string; description: string; category?: string | null; askPrice: number }[];
+  candidates: {
+    id: string;
+    title: string;
+    description: string;
+    category?: string | null;
+    askPrice: number;
+  }[];
 }
 
 interface ProductCandidate {
@@ -28,6 +34,21 @@ interface ProductCandidate {
 }
 
 const DEFAULT_MIN_VECTOR_SIMILARITY = 0.3;
+const MAX_CANDIDATES = 25;
+const FALLBACK_VECTOR_CANDIDATES = 10;
+const STOP_WORDS = new Set([
+  "con",
+  "del",
+  "el",
+  "la",
+  "las",
+  "los",
+  "para",
+  "por",
+  "que",
+  "una",
+  "uno",
+]);
 
 function minVectorSimilarity(): number {
   const configured = Number.parseFloat(process.env.MIN_MATCH_SIMILARITY ?? "");
@@ -59,25 +80,44 @@ const SCORING_SCHEMA = {
  * Step 1: pgvector retrieval over product descriptions with coarse price/category filters.
  * Step 2: ask the LLM to re-rank semantic relevance and return top N.
  */
-export async function findMatches(searchId: string, topN = 3): Promise<MatchCandidate[]> {
-  const search = await prisma.buyerSearch.findUnique({ where: { id: searchId } });
+export async function findMatches(
+  searchId: string,
+  topN = 3,
+): Promise<MatchCandidate[]> {
+  const search = await prisma.buyerSearch.findUnique({
+    where: { id: searchId },
+  });
   if (!search) throw new Error(`Search ${searchId} not found`);
 
   // 20% slack on max price — sellers may negotiate down.
   const ceiling = search.maxPrice * 1.2;
+  const category = normalizeCategory(search.category);
   const searchText = [
     search.query,
     search.requirements,
-    search.category ? `Category: ${search.category}` : null,
-  ].filter(Boolean).join("\n");
+    category ? `Category: ${category}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
   const { values } = await embedText(searchText);
   const vector = toVectorLiteral(values);
 
-  let candidates = await findVectorCandidates(vector, ceiling, search.category);
+  let candidates = mergeCandidates(
+    await findCandidatesWithCategoryFallback(category, (candidateCategory) =>
+      findVectorCandidates(vector, ceiling, candidateCategory),
+    ),
+    await findCandidatesWithCategoryFallback(category, (candidateCategory) =>
+      findLexicalCandidates(
+        search.query,
+        search.requirements,
+        ceiling,
+        candidateCategory,
+      ),
+    ),
+  );
 
-  // The buyer agent and seed sources don't always share category vocabulary.
-  if (candidates.length === 0 && search.category) {
-    candidates = await findVectorCandidates(vector, ceiling, null);
+  if (candidates.length === 0) {
+    candidates = await findNearestVectorCandidates(vector, ceiling);
   }
 
   if (candidates.length === 0) return [];
@@ -92,7 +132,7 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
   const scoringInput: ScoringInput = {
     query: search.query,
     requirements: search.requirements,
-    category: search.category,
+    category,
     candidates: candidates.map((c) => ({
       id: c.id,
       title: c.title,
@@ -118,7 +158,10 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
       temperature: 0.2,
     });
   } catch (err) {
-    log("Match scoring failed, falling back to vector similarity:", (err as Error).message);
+    log(
+      "Match scoring failed, falling back to vector similarity:",
+      (err as Error).message,
+    );
     scored = {
       matches: candidates.map((c) => ({
         productId: c.id,
@@ -130,10 +173,17 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
 
   // Defensive: keep only candidates we actually queried.
   const validIds = new Set(candidates.map((c) => c.id));
-  return scored.matches
+  const validMatches = scored.matches
     .filter((m) => validIds.has(m.productId))
     .sort((a, b) => b.score - a.score)
     .slice(0, topN);
+
+  if (validMatches.length > 0) return validMatches;
+
+  log(
+    "Match scoring returned no usable candidates; falling back to retrieval scores.",
+  );
+  return candidatesToMatches(candidates).slice(0, topN);
 }
 
 async function findVectorCandidates(
@@ -174,6 +224,140 @@ async function findVectorCandidates(
     FROM vector_candidates
     WHERE "distance" <= ${maximumDistance}
     ORDER BY "distance"
-    LIMIT 25
+    LIMIT ${MAX_CANDIDATES}
   `);
+}
+
+async function findNearestVectorCandidates(
+  vector: string,
+  ceiling: number,
+): Promise<ProductCandidate[]> {
+  return prisma.$queryRaw<ProductCandidate[]>(Prisma.sql`
+    SELECT
+      p."id",
+      p."title",
+      p."description",
+      p."category",
+      p."askPrice",
+      (pe."embedding" <=> ${vector}::vector) AS "distance",
+      (1 - (pe."embedding" <=> ${vector}::vector)) AS "similarity"
+    FROM "Product" p
+    INNER JOIN "ProductEmbedding" pe ON pe."productId" = p."id"
+    WHERE p."status" = 'active'
+      AND p."askPrice" <= ${ceiling}
+    ORDER BY "distance"
+    LIMIT ${FALLBACK_VECTOR_CANDIDATES}
+  `);
+}
+
+async function findLexicalCandidates(
+  query: string,
+  requirements: string | null,
+  ceiling: number,
+  category: string | null,
+): Promise<ProductCandidate[]> {
+  const terms = searchTerms(query, requirements);
+  if (terms.length === 0) return [];
+
+  const patterns = terms.map((term) => `%${escapeLike(term)}%`);
+  const termPredicates = patterns.map(
+    (pattern) =>
+      Prisma.sql`p."title" ILIKE ${pattern} ESCAPE '\\' OR p."description" ILIKE ${pattern} ESCAPE '\\'`,
+  );
+  const termHitScores = patterns.map(
+    (pattern) =>
+      Prisma.sql`CASE WHEN p."title" ILIKE ${pattern} ESCAPE '\\' OR p."description" ILIKE ${pattern} ESCAPE '\\' THEN 1 ELSE 0 END`,
+  );
+  const categoryFilter = category
+    ? Prisma.sql`AND p."category" = ${category}`
+    : Prisma.empty;
+
+  return prisma.$queryRaw<ProductCandidate[]>(Prisma.sql`
+    WITH lexical_candidates AS (
+      SELECT
+        p."id",
+        p."title",
+        p."description",
+        p."category",
+        p."askPrice",
+        (${Prisma.join(termHitScores, " + ")})::float AS "termHits"
+      FROM "Product" p
+      WHERE p."status" = 'active'
+        AND p."askPrice" <= ${ceiling}
+        ${categoryFilter}
+        AND (${Prisma.join(termPredicates, " OR ")})
+    )
+    SELECT
+      "id",
+      "title",
+      "description",
+      "category",
+      "askPrice",
+      1 - LEAST(0.95, 0.35 + ("termHits" / ${terms.length}) * 0.55) AS "distance",
+      LEAST(0.95, 0.35 + ("termHits" / ${terms.length}) * 0.55) AS "similarity"
+    FROM lexical_candidates
+    ORDER BY "similarity" DESC, "askPrice" ASC
+    LIMIT ${MAX_CANDIDATES}
+  `);
+}
+
+async function findCandidatesWithCategoryFallback(
+  category: string | null,
+  findCandidates: (category: string | null) => Promise<ProductCandidate[]>,
+): Promise<ProductCandidate[]> {
+  const candidates = await findCandidates(category);
+
+  // The buyer agent and seed sources don't always share category vocabulary.
+  if (candidates.length === 0 && category) {
+    return findCandidates(null);
+  }
+
+  return candidates;
+}
+
+function mergeCandidates(
+  ...candidateGroups: ProductCandidate[][]
+): ProductCandidate[] {
+  const byId = new Map<string, ProductCandidate>();
+
+  for (const candidate of candidateGroups.flat()) {
+    const existing = byId.get(candidate.id);
+    if (!existing || candidate.similarity > existing.similarity) {
+      byId.set(candidate.id, candidate);
+    }
+  }
+
+  return Array.from(byId.values())
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, MAX_CANDIDATES);
+}
+
+function candidatesToMatches(candidates: ProductCandidate[]): MatchCandidate[] {
+  return candidates.map((candidate) => ({
+    productId: candidate.id,
+    score: candidate.similarity,
+    rationale: "Fallback retrieval score.",
+  }));
+}
+
+function normalizeCategory(category: string | null): string | null {
+  const trimmed = category?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function searchTerms(query: string, requirements: string | null): string[] {
+  const terms =
+    [query, requirements]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase()
+      .match(/[a-z0-9áéíóúñü]+/gi) ?? [];
+
+  return Array.from(
+    new Set(terms.filter((term) => term.length >= 3 && !STOP_WORDS.has(term))),
+  ).slice(0, 8);
+}
+
+function escapeLike(term: string): string {
+  return term.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
