@@ -20,3 +20,71 @@ negotiationsRouter.get("/:id", async (req, res) => {
   if (neg.search.buyerId !== user.id) return res.status(403).json({ error: "not_the_owner" });
   return res.json(neg);
 });
+
+negotiationsRouter.post("/:id/accept", async (req, res) => {
+  const user = res.locals.user as AuthUser;
+  const neg = await prisma.negotiation.findUnique({
+    where: { id: req.params.id },
+    include: {
+      search: { select: { buyerId: true, maxPrice: true } },
+    },
+  });
+  if (!neg) return res.status(404).json({ error: "negotiation not found" });
+  if (neg.search.buyerId !== user.id) return res.status(403).json({ error: "not_the_owner" });
+  if (neg.status !== "awaiting_buyer") {
+    return res.status(409).json({ error: "not_awaiting_buyer" });
+  }
+  if (neg.finalPrice == null) {
+    return res.status(409).json({ error: "missing_final_price" });
+  }
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    const fresh = await tx.product.findUnique({ where: { id: neg.productId } });
+    if (!fresh || fresh.status !== "active") {
+      await tx.negotiation.update({
+        where: { id: neg.id },
+        data: {
+          status: "rejected",
+          successful: false,
+          reason: "Product was sold or withdrawn before buyer confirmation.",
+          completedAt: new Date(),
+        },
+      });
+      return { ok: false as const, code: "product_unavailable" };
+    }
+    if (neg.finalPrice! > neg.search.maxPrice) {
+      await tx.negotiation.update({
+        where: { id: neg.id },
+        data: {
+          status: "rejected",
+          successful: false,
+          reason: "Final price above buyer ceiling (safety check).",
+          completedAt: new Date(),
+        },
+      });
+      return { ok: false as const, code: "over_budget" };
+    }
+    await tx.product.update({
+      where: { id: neg.productId },
+      data: { status: "sold" },
+    });
+    const updated = await tx.negotiation.update({
+      where: { id: neg.id },
+      data: {
+        status: "accepted",
+        successful: true,
+        completedAt: new Date(),
+      },
+      include: {
+        messages: { orderBy: { createdAt: "asc" } },
+        product: { select: { id: true, title: true, askPrice: true } },
+      },
+    });
+    return { ok: true as const, neg: updated };
+  });
+
+  if (!outcome.ok) {
+    return res.status(409).json({ error: outcome.code });
+  }
+  return res.json(outcome.neg);
+});

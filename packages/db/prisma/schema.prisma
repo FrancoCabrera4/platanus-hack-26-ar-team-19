@@ -44,7 +44,7 @@ model Product {
   id                  String   @id @default(uuid())
   userId              String
   conversationId      String?  @unique
-  title               String
+  title               String   @unique
   description         String
   category            String?
   condition           String?
@@ -146,7 +146,7 @@ model Negotiation {
   buyerId     String
   sellerId    String
   status      String    @default("pending")
-    // pending | running | accepted | rejected | timed_out | error
+    // pending | running | awaiting_buyer | accepted | rejected | timed_out | error
   successful  Boolean   @default(false)
   finalPrice  Float?
   reason      String?

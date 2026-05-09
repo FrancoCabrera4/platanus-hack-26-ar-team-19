@@ -8,7 +8,7 @@ const MAX_TURNS = 8; // 4 buyer turns + 4 seller turns
 
 export interface NegotiationResult {
   negotiationId: string;
-  status: "accepted" | "rejected" | "timed_out" | "error";
+  status: "awaiting_buyer" | "accepted" | "rejected" | "timed_out" | "error";
   finalPrice: number | null;
   reason?: string;
   successful: boolean;
@@ -22,7 +22,9 @@ interface TranscriptEntry {
 
 /**
  * Run a full negotiation between buyer and seller agents for a (search, product) pair.
- * Persists all messages to the DB. An accepted Negotiation is the deal record.
+ * Persists all messages to the DB. When the agents reach agreement, the negotiation is
+ * left in `awaiting_buyer`; the buyer must explicitly confirm via POST /negotiations/:id/accept
+ * to flip it to `accepted` and mark the product as sold.
  */
 export async function runNegotiation(searchId: string, productId: string): Promise<NegotiationResult> {
   const [search, product] = await Promise.all([
@@ -183,43 +185,31 @@ export async function runNegotiation(searchId: string, productId: string): Promi
     };
   }
 
-  // Final safety check before accepting: make sure product is still available
-  // and price is within the buyer's budget. Prevents one product being sold twice.
+  // When the agents reach agreement, leave the negotiation in `awaiting_buyer`
+  // with the agreed price. The product stays active and `successful` stays false
+  // until the buyer confirms via POST /negotiations/:id/accept.
   if (result.status === "accepted" && result.finalPrice != null) {
-    const acceptance = await prisma.$transaction(async (tx) => {
-      const fresh = await tx.product.findUnique({ where: { id: productId } });
-      if (!fresh || fresh.status !== "active") {
-        return { ok: false as const, reason: "Product was sold or withdrawn during negotiation." };
-      }
-      if (result.finalPrice! > search.maxPrice) {
-        return { ok: false as const, reason: "Final price above buyer ceiling (safety check)." };
-      }
-      await tx.product.update({
-        where: { id: productId },
-        data: { status: "sold" },
-      });
-      await tx.negotiation.update({
-        where: { id: negotiation.id },
-        data: {
-          status: "accepted",
-          successful: true,
-          finalPrice: result.finalPrice!,
-          reason: result.reason,
-          completedAt: new Date(),
-        },
-      });
-      return { ok: true as const };
-    });
-
-    if (!acceptance.ok) {
+    if (result.finalPrice > search.maxPrice) {
+      // Defensive: agents shouldn't agree above the buyer ceiling, but if they do,
+      // reject the deal instead of presenting it for confirmation.
       result = {
         negotiationId: negotiation.id,
         status: "rejected",
         finalPrice: null,
         successful: false,
-        reason: acceptance.reason,
+        reason: "Final price above buyer ceiling (safety check).",
       };
     } else {
+      result = { ...result, status: "awaiting_buyer", successful: false };
+      await prisma.negotiation.update({
+        where: { id: negotiation.id },
+        data: {
+          status: "awaiting_buyer",
+          successful: false,
+          finalPrice: result.finalPrice,
+          reason: result.reason,
+        },
+      });
       return result;
     }
   }

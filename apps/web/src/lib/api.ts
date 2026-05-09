@@ -264,8 +264,18 @@ export async function getSearch(id: string): Promise<SearchDetail> {
   return apiFetch<SearchDetail>(`/searches/${id}`);
 }
 
+export async function getProduct(id: string): Promise<Product> {
+  return apiFetch<Product>(`/products/${id}`);
+}
+
 export async function getNegotiation(id: string): Promise<NegotiationDetail> {
   return apiFetch<NegotiationDetail>(`/negotiations/${id}`);
+}
+
+export async function acceptNegotiation(id: string): Promise<NegotiationDetail> {
+  return apiFetch<NegotiationDetail>(`/negotiations/${id}/accept`, {
+    method: "POST",
+  });
 }
 
 export async function getJob(id: string): Promise<JobDetail> {
