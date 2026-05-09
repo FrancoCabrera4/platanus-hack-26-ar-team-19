@@ -19,11 +19,13 @@
     "@prisma/client": "^5.14.0",
     "@repo/db": "workspace:*",
     "@repo/logger": "workspace:*",
+    "@types/multer": "^2.1.0",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.18.3",
     "morgan": "^1.10.0",
+    "multer": "^2.1.1",
     "openai": "^6.37.0",
     "uuid": "^14.0.0",
     "zod": "^4.4.3"

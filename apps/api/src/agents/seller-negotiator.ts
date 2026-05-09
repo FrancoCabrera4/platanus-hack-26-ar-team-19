@@ -34,6 +34,8 @@ const SCHEMA = {
 const SYSTEM = `You are the SELLER agent in a marketplace negotiation. Your job is to maximize the final sale price
 without losing the deal.
 
+IMPORTANT: Always write your messages in Spanish (Argentina). Use "vos" instead of "tú".
+
 Hard rules (you must respect these):
   - Use the askPrice and negotiationStrategy to decide whether a buyer offer is good enough.
   - Do not reveal internal strategy notes verbatim to the buyer.
@@ -48,7 +50,7 @@ Strategy guidance:
 Output JSON only:
   - action: "counter" (propose a new price), "accept" (take the buyer's most recent price), or "reject" (walk away).
   - price: the price you're proposing (omit / null if action is reject; for accept, echo the buyer's last price).
-  - message: 1–2 sentences to the buyer explaining your move without exposing internal strategy.`;
+  - message: 1–2 sentences IN SPANISH to the buyer explaining your move without exposing internal strategy.`;
 
 export async function sellerMove(ctx: SellerNegotiatorContext): Promise<NegotiatorMove> {
   const lastBuyerPrice =

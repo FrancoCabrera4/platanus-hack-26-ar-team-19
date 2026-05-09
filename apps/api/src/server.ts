@@ -2,6 +2,7 @@ import { json, urlencoded } from "body-parser";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import morgan from "morgan";
 import cors from "cors";
+import path from "path";
 
 import { usersRouter } from "./routes/users";
 import { conversationsRouter } from "./routes/conversations";
@@ -10,6 +11,7 @@ import { searchesRouter } from "./routes/searches";
 import { negotiationsRouter } from "./routes/negotiations";
 import { jobsRouter } from "./routes/jobs";
 import { authRouter } from "./routes/auth";
+import { uploadsRouter } from "./routes/uploads";
 import { log } from "@repo/logger";
 
 export const createServer = (): Express => {
@@ -24,6 +26,7 @@ export const createServer = (): Express => {
       origin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
       credentials: true,
     }))
+    .use("/uploads", express.static(path.resolve(__dirname, "../public/uploads")))
     .get("/status", (_req, res) => res.json({ ok: true }))
     .use("/auth", authRouter)
     .use("/users", usersRouter)
@@ -31,7 +34,8 @@ export const createServer = (): Express => {
     .use("/products", productsRouter)
     .use("/searches", searchesRouter)
     .use("/negotiations", negotiationsRouter)
-    .use("/jobs", jobsRouter);
+    .use("/jobs", jobsRouter)
+    .use("/uploads", uploadsRouter);
 
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     log("ERROR", err.message, err.stack);

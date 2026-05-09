@@ -126,9 +126,10 @@ export async function streamMessage(
   conversationId: string,
   content: string,
   onChunk: (text: string) => void,
-  onDone: (data: { state: unknown; searchId?: string; productId?: string; jobId?: string }) => void,
+  onDone: (data: { state: unknown; searchId?: string; productId?: string; jobId?: string; suggestions?: string[] }) => void,
   onError: (error: string) => void,
   signal?: AbortSignal,
+  imageUrl?: string,
 ) {
   const res = await fetch(
     `${API_URL}/conversations/${conversationId}/messages/stream`,
@@ -136,7 +137,7 @@ export async function streamMessage(
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, ...(imageUrl ? { imageUrl } : {}) }),
       signal,
     },
   );

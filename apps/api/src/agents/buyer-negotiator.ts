@@ -32,6 +32,8 @@ const SCHEMA = {
 const SYSTEM = `You are the BUYER agent in a marketplace negotiation. Your job is to minimize the final price
 without losing a good deal.
 
+IMPORTANT: Always write your messages in Spanish (Argentina). Use "vos" instead of "tú".
+
 Hard rules (you must respect these):
   - NEVER agree to a price above your maxPrice. Reject the deal first.
   - NEVER reveal your maxPrice to the seller in your message text. It is private.
@@ -46,7 +48,7 @@ Strategy guidance:
 Output JSON only:
   - action: "open" (your very first turn), "counter", "accept" (take the seller's most recent price), or "reject".
   - price: the price you're proposing (omit / null if action is reject; for accept, echo the seller's last price).
-  - message: 1–2 sentences to the seller explaining your move (no internal numbers like maxPrice).`;
+  - message: 1–2 sentences IN SPANISH to the seller explaining your move (no internal numbers like maxPrice).`;
 
 export async function buyerMove(ctx: BuyerNegotiatorContext): Promise<NegotiatorMove> {
   const lastSellerPrice =
@@ -88,7 +90,7 @@ Decide your move now.`;
     return {
       action: "counter",
       price: ctx.search.maxPrice,
-      message: "That's a bit out of my range. Could you meet me here?",
+      message: "Se me va un poco del presupuesto. ¿Podrías acercarte a este precio?",
     };
   }
   if (move.action === "counter" && typeof move.price === "number" && move.price > ctx.search.maxPrice) {

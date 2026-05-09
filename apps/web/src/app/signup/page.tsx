@@ -34,9 +34,9 @@ export default function SignupPage() {
   return (
     <div className="min-h-screen bg-background flex">
       {/* Left panel */}
-      <div className="hidden lg:flex lg:w-1/2 bg-foreground text-background p-12 flex-col justify-between">
+      <div className="hidden lg:flex lg:w-1/2 bg-foreground text-background pl-8 pr-12 py-12 flex-col justify-between">
         <div>
-          <img src="/logo.svg" alt="negocIA" className="h-24 invert" />
+          <img src="/logo-dark.svg" alt="negocIA" className="h-24 -ml-4" />
         </div>
         <div>
           <p

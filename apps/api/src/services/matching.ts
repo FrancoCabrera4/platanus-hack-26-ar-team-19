@@ -3,6 +3,7 @@ import prisma from "@repo/db";
 import { log } from "@repo/logger";
 import { generateJSON } from "../llm/gemini";
 import { embedText, toVectorLiteral } from "./embeddings";
+import { verifyProductMatch } from "./vision";
 
 export interface MatchCandidate {
   productId: string;
@@ -22,6 +23,7 @@ interface ProductCandidate {
   title: string;
   description: string;
   category: string | null;
+  imageUrl: string | null;
   askPrice: number;
   distance: number;
   similarity: number;
@@ -57,25 +59,25 @@ const SCORING_SCHEMA = {
 /**
  * Find candidate products that could fulfill a buyer search.
  * Step 1: pgvector retrieval over product descriptions with coarse price/category filters.
- * Step 2: ask the LLM to re-rank semantic relevance and return top N.
+ * Step 2: LLM text re-rank for semantic relevance.
+ * Step 3: Vision re-rank — verify product images actually match what the buyer wants.
  */
 export async function findMatches(searchId: string, topN = 3): Promise<MatchCandidate[]> {
   const search = await prisma.buyerSearch.findUnique({ where: { id: searchId } });
   if (!search) throw new Error(`Search ${searchId} not found`);
 
-  // 20% slack on max price — sellers may negotiate down.
   const ceiling = search.maxPrice * 1.2;
   const searchText = [
     search.query,
     search.requirements,
     search.category ? `Category: ${search.category}` : null,
+    search.imageDescription ? `Visual: ${search.imageDescription}` : null,
   ].filter(Boolean).join("\n");
   const { values } = await embedText(searchText);
   const vector = toVectorLiteral(values);
 
   let candidates = await findVectorCandidates(vector, ceiling, search.category);
 
-  // The buyer agent and seed sources don't always share category vocabulary.
   if (candidates.length === 0 && search.category) {
     candidates = await findVectorCandidates(vector, ceiling, null);
   }
@@ -89,6 +91,7 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
     }));
   }
 
+  // Step 2: LLM text re-rank
   const scoringInput: ScoringInput = {
     query: search.query,
     requirements: search.requirements,
@@ -107,7 +110,8 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
     scored = await generateJSON<{ matches: MatchCandidate[] }>({
       system:
         "You are a matching engine for a marketplace. Score how well each product fits the buyer's request, " +
-        "considering both semantic relevance and price reasonableness. Return a score in [0,1] for each candidate.",
+        "considering both semantic relevance and price reasonableness. Return a score in [0,1] for each candidate. " +
+        "Be strict: only score above 0.5 if the product is genuinely what the buyer is looking for.",
       history: [
         {
           role: "user",
@@ -128,12 +132,67 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
     };
   }
 
-  // Defensive: keep only candidates we actually queried.
   const validIds = new Set(candidates.map((c) => c.id));
-  return scored.matches
+  let textRanked = scored.matches
     .filter((m) => validIds.has(m.productId))
     .sort((a, b) => b.score - a.score)
-    .slice(0, topN);
+    .slice(0, Math.max(topN * 2, 6));
+
+  // Step 3: Vision re-rank — verify product images match the buyer's intent
+  const candidateMap = new Map(candidates.map((c) => [c.id, c]));
+  const buyerDescription = [
+    search.query,
+    search.requirements,
+    search.imageDescription,
+  ].filter(Boolean).join(". ");
+
+  textRanked = await visionRerank(textRanked, candidateMap, buyerDescription);
+
+  return textRanked.slice(0, topN);
+}
+
+async function visionRerank(
+  matches: MatchCandidate[],
+  candidateMap: Map<string, ProductCandidate>,
+  buyerDescription: string,
+): Promise<MatchCandidate[]> {
+  const results: MatchCandidate[] = [];
+
+  for (const match of matches) {
+    const candidate = candidateMap.get(match.productId);
+    if (!candidate?.imageUrl) {
+      results.push(match);
+      continue;
+    }
+
+    try {
+      const visionResult = await verifyProductMatch(
+        candidate.imageUrl,
+        buyerDescription,
+        candidate.title,
+      );
+
+      if (visionResult.matches) {
+        results.push({
+          ...match,
+          score: match.score * (0.5 + visionResult.confidence * 0.5),
+          rationale: `${match.rationale} | Vision: ${visionResult.reason}`,
+        });
+      } else {
+        log(`Vision rejected "${candidate.title}": ${visionResult.reason}`);
+        results.push({
+          ...match,
+          score: match.score * 0.2,
+          rationale: `${match.rationale} | Vision rejected: ${visionResult.reason}`,
+        });
+      }
+    } catch (err) {
+      log("Vision rerank failed for", candidate.id, (err as Error).message);
+      results.push(match);
+    }
+  }
+
+  return results.sort((a, b) => b.score - a.score);
 }
 
 async function findVectorCandidates(
@@ -155,6 +214,7 @@ async function findVectorCandidates(
         p."title",
         p."description",
         p."category",
+        p."imageUrl",
         p."askPrice",
         (pe."embedding" <=> ${vector}::vector) AS "distance"
       FROM "Product" p
@@ -168,6 +228,7 @@ async function findVectorCandidates(
       "title",
       "description",
       "category",
+      "imageUrl",
       "askPrice",
       "distance",
       (1 - "distance") AS "similarity"

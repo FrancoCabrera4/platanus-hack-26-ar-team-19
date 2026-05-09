@@ -14,7 +14,9 @@ import {
 } from "../agents/seller-onboarding";
 import { enqueueRunSearch } from "../jobs/runner";
 import type { ChatTurn } from "../llm/gemini";
-import { upsertProductEmbedding } from "../services/embeddings";
+import { embedText, toVectorLiteral, upsertProductEmbedding } from "../services/embeddings";
+import { analyzeProductImage, analyzeSearchImage } from "../services/vision";
+import { getPriceReference, type MLPriceRef } from "../services/mercadolibre";
 import { requireAuth, type AuthUser } from "../auth";
 import { asyncHandler, sseHeaders, sseSend } from "./_sse";
 
@@ -22,13 +24,17 @@ export const conversationsRouter: RouterType = Router();
 
 const ConversationMode = z.enum(["buying", "posting_product"]);
 const StartConversation = z.object({ mode: ConversationMode });
-const PostMessage = z.object({ content: z.string().min(1) });
+const PostMessage = z.object({
+  content: z.string().min(1),
+  imageUrl: z.string().optional(),
+});
 
 type ConversationMode = z.infer<typeof ConversationMode>;
 type ConversationMessageRow = { role: string; content: string };
 type DraftState = BuyerSearchDraft | SellerProductDraft;
 
 const STATE_PREFIX = "__state__:";
+const ML_PREFIX = "__ml__:";
 const UNCAPPED_BUYER_MAX_PRICE = 1_000_000_000;
 
 function currentUser(res: { locals: { user?: AuthUser } }): AuthUser {
@@ -38,7 +44,9 @@ function currentUser(res: { locals: { user?: AuthUser } }): AuthUser {
 }
 
 function visibleMessages(messages: ConversationMessageRow[]): ConversationMessageRow[] {
-  return messages.filter((m) => m.role !== "system" || !m.content.startsWith(STATE_PREFIX));
+  return messages.filter((m) =>
+    m.role !== "system" || (!m.content.startsWith(STATE_PREFIX) && !m.content.startsWith(ML_PREFIX)),
+  );
 }
 
 function buildHistory(messages: ConversationMessageRow[], content: string): ChatTurn[] {
@@ -62,41 +70,59 @@ function latestState<T extends DraftState>(messages: ConversationMessageRow[]): 
   }
 }
 
+function latestMLData(messages: ConversationMessageRow[]): MLPriceRef | null {
+  const raw = [...messages].reverse().find((m) => (
+    m.role === "system" && m.content.startsWith(ML_PREFIX)
+  ))?.content.slice(ML_PREFIX.length);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
 function stateMessage(state: DraftState) {
   return { role: "system", content: `${STATE_PREFIX}${JSON.stringify(state)}` };
+}
+
+function mlMessage(data: MLPriceRef) {
+  return { role: "system", content: `${ML_PREFIX}${JSON.stringify(data)}` };
 }
 
 function normalizeBuyerMaxPrice(maxPrice: number | undefined): number {
   if (typeof maxPrice === "number" && Number.isFinite(maxPrice) && maxPrice > 0) {
     return maxPrice;
   }
-
   return UNCAPPED_BUYER_MAX_PRICE;
 }
 
-async function runTurn(
+function buildMLContext(ml: MLPriceRef): string {
+  const topProducts = ml.products.slice(0, 3).map((p) =>
+    `  - "${p.title}" → $${p.price.toLocaleString("es-AR")} (${p.condition})`,
+  ).join("\n");
+  return `\nMarket price reference from MercadoLibre (${ml.count} results):\n` +
+    `  Min: $${ml.min.toLocaleString("es-AR")} | Max: $${ml.max.toLocaleString("es-AR")} | Promedio: $${ml.avg.toLocaleString("es-AR")} | Mediana: $${ml.median.toLocaleString("es-AR")}\n` +
+    `  Top listings:\n${topProducts}\n` +
+    `Use this data to suggest a competitive price to the seller. Mention it naturally.`;
+}
+
+async function runTurnWithContext(
   mode: ConversationMode,
   history: ChatTurn[],
   state: DraftState,
+  mlData: MLPriceRef | null,
+  onChunk?: (text: string) => void,
 ) {
   if (mode === "buying") {
+    if (onChunk) {
+      return streamBuyerOnboardingTurn(history, state as BuyerSearchDraft, onChunk);
+    }
     return runBuyerOnboardingTurn(history, state as BuyerSearchDraft);
   }
 
-  return runSellerOnboardingTurn(history, state as SellerProductDraft);
-}
+  const mlContext = mlData ? buildMLContext(mlData) : undefined;
 
-async function streamTurn(
-  mode: ConversationMode,
-  history: ChatTurn[],
-  state: DraftState,
-  onChunk: (text: string) => void,
-) {
-  if (mode === "buying") {
-    return streamBuyerOnboardingTurn(history, state as BuyerSearchDraft, onChunk);
+  if (onChunk) {
+    return streamSellerOnboardingTurn(history, state as SellerProductDraft, onChunk, mlContext);
   }
-
-  return streamSellerOnboardingTurn(history, state as SellerProductDraft, onChunk);
+  return runSellerOnboardingTurn(history, state as SellerProductDraft, mlContext);
 }
 
 async function completeConversation(
@@ -135,10 +161,19 @@ async function completeConversation(
         condition: productState.condition ?? null,
         askPrice: productState.askPrice,
         negotiationStrategy: productState.negotiationStrategy,
+        imageUrl: productState.imageUrl ?? null,
       },
     });
 
-    await upsertProductEmbedding(product.id, product).catch((err) => {
+    let visionAnalysis: string | null = null;
+    if (product.imageUrl) {
+      visionAnalysis = await analyzeProductImage(product.imageUrl).catch((err) => {
+        log("Product vision analysis failed:", (err as Error).message);
+        return null;
+      });
+    }
+
+    await upsertProductEmbedding(product.id, { ...product, visionAnalysis }).catch((err) => {
       log("Product embedding failed:", (err as Error).message);
     });
 
@@ -165,6 +200,8 @@ async function completeConversation(
       maxPrice,
       negotiationStrategy: searchState.negotiationStrategy,
       timeBudgetSeconds: searchState.timeBudgetSeconds ?? 120,
+      imageUrl: searchState.imageUrl ?? null,
+      imageDescription: searchState.imageDescription ?? null,
       status: "ready",
     },
   });
@@ -177,6 +214,53 @@ async function completeConversation(
   return { searchId: search.id, jobId };
 }
 
+const LOCAL_THRESHOLD = 10;
+
+async function countLocalMatches(query: string): Promise<number> {
+  try {
+    const { values } = await embedText(query);
+    const vector = toVectorLiteral(values);
+    const result = await prisma.$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*) as count
+      FROM "Product" p
+      INNER JOIN "ProductEmbedding" pe ON pe."productId" = p."id"
+      WHERE p."status" = 'active'
+        AND (pe."embedding" <=> ${vector}::vector) <= 0.7
+    `;
+    return Number(result[0]?.count ?? 0);
+  } catch (err) {
+    log("Local match count failed:", (err as Error).message);
+    return 999;
+  }
+}
+
+async function fetchMLIfNeeded(
+  mode: ConversationMode,
+  state: DraftState,
+  existingML: MLPriceRef | null,
+): Promise<MLPriceRef | null> {
+  if (mode !== "posting_product") return null;
+  if (existingML) return existingML;
+
+  const sellerState = state as SellerProductDraft;
+  const query = sellerState.title;
+  if (!query) return null;
+
+  const localCount = await countLocalMatches(query);
+  if (localCount >= LOCAL_THRESHOLD) {
+    log(`Found ${localCount} local matches for "${query}", skipping MercadoLibre`);
+    return null;
+  }
+
+  log(`Only ${localCount} local matches for "${query}", fetching MercadoLibre prices`);
+  try {
+    return await getPriceReference(query);
+  } catch (err) {
+    log("MercadoLibre lookup failed:", (err as Error).message);
+    return null;
+  }
+}
+
 conversationsRouter.use(requireAuth);
 
 conversationsRouter.post("/", asyncHandler(async (req, res) => {
@@ -184,7 +268,7 @@ conversationsRouter.post("/", asyncHandler(async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const user = currentUser(res);
-  const turn = await runTurn(parsed.data.mode, [], {});
+  const turn = await runTurnWithContext(parsed.data.mode, [], {}, null);
 
   const conversation = await prisma.conversation.create({
     data: {
@@ -206,6 +290,7 @@ conversationsRouter.post("/", asyncHandler(async (req, res) => {
     status: conversation.status,
     state: turn.state,
     done: turn.done,
+    suggestions: turn.suggestions ?? [],
     messages: visibleMessages(conversation.messages),
   });
 }));
@@ -260,19 +345,40 @@ conversationsRouter.post("/:id/messages", asyncHandler(async (req, res) => {
   });
 
   const state = latestState(conversation.messages);
-  const turn = await runTurn(
+
+  if (parsed.data.imageUrl) {
+    if (conversation.mode === "buying") {
+      const buyerState = state as BuyerSearchDraft;
+      buyerState.imageUrl = parsed.data.imageUrl;
+      try {
+        buyerState.imageDescription = await analyzeSearchImage(parsed.data.imageUrl);
+      } catch (err) {
+        log("Image analysis failed:", (err as Error).message);
+      }
+    } else {
+      (state as SellerProductDraft).imageUrl = parsed.data.imageUrl;
+    }
+  }
+
+  const existingML = latestMLData(conversation.messages);
+  const mlData = await fetchMLIfNeeded(conversation.mode as ConversationMode, state, existingML);
+
+  const turn = await runTurnWithContext(
     conversation.mode as ConversationMode,
     buildHistory(conversation.messages, parsed.data.content),
     state,
+    mlData,
   );
   const merged = { ...state, ...turn.state };
 
-  await prisma.conversationMessage.createMany({
-    data: [
-      { conversationId: conversation.id, role: "assistant", content: turn.reply },
-      { conversationId: conversation.id, ...stateMessage(merged) },
-    ],
-  });
+  const messagesToSave = [
+    { conversationId: conversation.id, role: "assistant", content: turn.reply },
+    { conversationId: conversation.id, ...stateMessage(merged) },
+  ];
+  if (mlData && !existingML) {
+    messagesToSave.push({ conversationId: conversation.id, ...mlMessage(mlData) });
+  }
+  await prisma.conversationMessage.createMany({ data: messagesToSave });
 
   const completion = await completeConversation(
     conversation.id,
@@ -282,7 +388,13 @@ conversationsRouter.post("/:id/messages", asyncHandler(async (req, res) => {
     merged,
   );
 
-  return res.json({ reply: turn.reply, state: merged, done: turn.done, ...completion });
+  return res.json({
+    reply: turn.reply,
+    state: merged,
+    done: turn.done,
+    suggestions: turn.suggestions ?? [],
+    ...completion,
+  });
 }));
 
 conversationsRouter.post("/:id/messages/stream", asyncHandler(async (req, res) => {
@@ -308,20 +420,41 @@ conversationsRouter.post("/:id/messages/stream", asyncHandler(async (req, res) =
     });
 
     const state = latestState(conversation.messages);
-    const turn = await streamTurn(
+
+    if (parsed.data.imageUrl) {
+      if (conversation.mode === "buying") {
+        const buyerState = state as BuyerSearchDraft;
+        buyerState.imageUrl = parsed.data.imageUrl;
+        try {
+          buyerState.imageDescription = await analyzeSearchImage(parsed.data.imageUrl);
+        } catch (err) {
+          log("Image analysis failed:", (err as Error).message);
+        }
+      } else {
+        (state as SellerProductDraft).imageUrl = parsed.data.imageUrl;
+      }
+    }
+
+    const existingML = latestMLData(conversation.messages);
+    const mlData = await fetchMLIfNeeded(conversation.mode as ConversationMode, state, existingML);
+
+    const turn = await runTurnWithContext(
       conversation.mode as ConversationMode,
       buildHistory(conversation.messages, parsed.data.content),
       state,
+      mlData,
       (chunk) => sseSend(res, { chunk }),
     );
     const merged = { ...state, ...turn.state };
 
-    await prisma.conversationMessage.createMany({
-      data: [
-        { conversationId: conversation.id, role: "assistant", content: turn.reply },
-        { conversationId: conversation.id, ...stateMessage(merged) },
-      ],
-    });
+    const messagesToSave = [
+      { conversationId: conversation.id, role: "assistant", content: turn.reply },
+      { conversationId: conversation.id, ...stateMessage(merged) },
+    ];
+    if (mlData && !existingML) {
+      messagesToSave.push({ conversationId: conversation.id, ...mlMessage(mlData) });
+    }
+    await prisma.conversationMessage.createMany({ data: messagesToSave });
 
     const completion = await completeConversation(
       conversation.id,
@@ -331,7 +464,12 @@ conversationsRouter.post("/:id/messages/stream", asyncHandler(async (req, res) =
       merged,
     );
 
-    sseSend(res, { done: true, state: merged, ...completion });
+    sseSend(res, {
+      done: true,
+      state: merged,
+      suggestions: turn.suggestions ?? [],
+      ...completion,
+    });
   } catch (err) {
     sseSend(res, { error: (err as Error).message });
   }

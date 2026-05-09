@@ -22,12 +22,13 @@ const geminiEmbeddingModel = process.env.GEMINI_EMBEDDING_MODEL ?? "text-embeddi
 const openAiClient = new OpenAI({ apiKey: openAiApiKey ?? "missing" });
 const geminiClient = new GoogleGenerativeAI(geminiApiKey ?? "missing");
 
-export function buildProductEmbeddingText(product: ProductEmbeddingInput): string {
+export function buildProductEmbeddingText(product: ProductEmbeddingInput & { visionAnalysis?: string | null }): string {
   return [
     product.title,
     product.description,
     product.category ? `Category: ${product.category}` : null,
     product.condition ? `Condition: ${product.condition}` : null,
+    product.visionAnalysis ? `Visual: ${product.visionAnalysis}` : null,
   ].filter(Boolean).join("\n");
 }
 
@@ -82,7 +83,7 @@ export function toVectorLiteral(values: number[]): string {
 
 export async function upsertProductEmbedding(
   productId: string,
-  product: ProductEmbeddingInput,
+  product: ProductEmbeddingInput & { visionAnalysis?: string | null },
 ): Promise<void> {
   const text = buildProductEmbeddingText(product);
   const { values, model } = await embedText(text);

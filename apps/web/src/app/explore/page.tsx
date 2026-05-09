@@ -34,19 +34,11 @@ type Tile = {
   color: string;
 };
 
-const FALLBACK_TILES: Tile[] = [
-  { id: "f1", title: "Bicicleta Trek FX3", h: 280, color: "hsl(220 14% 90%)", negStatus: null },
-  { id: "f2", title: "MacBook Air M2", h: 340, color: "hsl(220 14% 86%)", negStatus: null },
-  { id: "f3", title: "Escritorio IKEA", h: 240, color: "hsl(220 14% 92%)", negStatus: null },
-  { id: "f4", title: "iPhone 15 Pro", h: 320, color: "hsl(220 14% 88%)", negStatus: null },
-  { id: "f5", title: "Silla Herman Miller", h: 360, color: "hsl(220 14% 84%)", negStatus: null },
-  { id: "f6", title: "Monitor LG 27\"", h: 260, color: "hsl(220 14% 91%)", negStatus: null },
-  { id: "f7", title: "Cámara Sony A7III", h: 300, color: "hsl(220 14% 87%)", negStatus: null },
-  { id: "f8", title: "Teclado Keychron K2", h: 220, color: "hsl(220 14% 93%)", negStatus: null },
-  { id: "f9", title: "Zapatillas Nike Air", h: 290, color: "hsl(220 14% 89%)", negStatus: null },
-  { id: "f10", title: "Mochila Peak Design", h: 330, color: "hsl(220 14% 85%)", negStatus: null },
-  { id: "f11", title: "Auriculares Sony WH", h: 250, color: "hsl(220 14% 90%)", negStatus: null },
-  { id: "f12", title: "Kindle Paperwhite", h: 270, color: "hsl(220 14% 88%)", negStatus: null },
+const SKELETON_TILES = [
+  { id: "s1", h: 280 }, { id: "s2", h: 340 }, { id: "s3", h: 240 },
+  { id: "s4", h: 320 }, { id: "s5", h: 360 }, { id: "s6", h: 260 },
+  { id: "s7", h: 300 }, { id: "s8", h: 220 }, { id: "s9", h: 290 },
+  { id: "s10", h: 330 }, { id: "s11", h: 250 }, { id: "s12", h: 270 },
 ];
 
 const TILE_HEIGHTS = [200, 220, 240, 260, 280, 300, 320, 340, 360];
@@ -57,7 +49,7 @@ const TILE_COLORS = [
   "hsl(220 14% 90%)",
   "hsl(220 14% 92%)",
 ];
-const PRODUCTS_PAGE_SIZE = 40;
+const PRODUCTS_PAGE_SIZE = 10000;
 
 function productsToTiles(products: Product[]): Tile[] {
   return products.map((product, i) => ({
@@ -80,6 +72,7 @@ const SELL_KEYWORDS = ["vender", "vendo", "publicar", "listar", "tengo para vend
 type Message = {
   role: "user" | "assistant";
   content: string;
+  imageUrl?: string;
 };
 
 type ChatMode = "idle" | "buying" | "posting_product";
@@ -104,6 +97,7 @@ export default function ExplorePage() {
   const [pendingImage, setPendingImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -122,8 +116,9 @@ export default function ExplorePage() {
     () => products.slice(0, visibleProductCount),
     [products, visibleProductCount],
   );
-  const browseTiles = products.length > 0 ? productsToTiles(visibleProducts) : FALLBACK_TILES;
+  const browseTiles = products.length > 0 ? productsToTiles(visibleProducts) : [];
   const tiles = searchTiles.length > 0 || searching ? searchTiles : browseTiles;
+  const isLoadingProducts = products.length === 0 && !authLoading;
   const hasMoreProducts = visibleProductCount < products.length;
 
   useEffect(() => {
@@ -135,7 +130,9 @@ export default function ExplorePage() {
         }
         setUser(me);
       })
-      .catch(() => {})
+      .catch(() => {
+        router.replace("/login");
+      })
       .finally(() => setAuthLoading(false));
   }, [router]);
 
@@ -184,12 +181,17 @@ export default function ExplorePage() {
 
   function pollSearch(searchId: string, resetTiles = true) {
     setSearching(true);
+    setSearchStatus("Buscando productos...");
     if (resetTiles) setSearchTiles([]);
     const reportedNegotiationStates = new Map<string, string>();
 
     const poll = async () => {
       try {
         const search = await getSearch(searchId);
+
+        if (search.negotiations.length === 0 && search.status !== "completed" && search.status !== "failed") {
+          setSearchStatus("Analizando productos compatibles...");
+        }
 
         for (let i = 0; i < search.negotiations.length; i++) {
           const neg = search.negotiations[i]!;
@@ -223,12 +225,13 @@ export default function ExplorePage() {
           if (reportedNegotiationStates.get(neg.id) !== stateKey) {
             reportedNegotiationStates.set(neg.id, stateKey);
             if (neg.status === "accepted" && neg.finalPrice != null) {
-              const finalPrice = neg.finalPrice;
-              setMessages((prev) => [...prev, { role: "assistant", content: `Encontré "${product.title}" y cerré la negociación a ${formatARS(finalPrice)}` }]);
+              setSearchStatus(`Trato cerrado: "${product.title}" a ${formatARS(neg.finalPrice)}`);
             } else if (neg.status === "rejected" || neg.status === "timed_out" || neg.status === "error") {
-              setMessages((prev) => [...prev, { role: "assistant", content: `"${product.title}" — no se pudo cerrar trato, sigo buscando...` }]);
+              setSearchStatus(`"${product.title}" — sin acuerdo, buscando más...`);
+            } else if (neg.status === "running") {
+              setSearchStatus(`Negociando "${product.title}"...`);
             } else {
-              setMessages((prev) => [...prev, { role: "assistant", content: `Negociando "${product.title}"...` }]);
+              setSearchStatus(`Encontré "${product.title}", preparando negociación...`);
             }
           }
         }
@@ -236,15 +239,14 @@ export default function ExplorePage() {
         if (search.status === "completed" || search.status === "failed") {
           setSearching(false);
           const accepted = search.negotiations.find((neg) => neg.status === "accepted");
-          const acceptedPrice = accepted?.finalPrice;
-          if (acceptedPrice != null) {
-            setMessages((prev) => [...prev, { role: "assistant", content: `Listo! Tu negociación cerró en ${formatARS(acceptedPrice)}.` }]);
+          if (accepted?.finalPrice != null) {
+            setSearchStatus(`Listo! Negociación cerrada a ${formatARS(accepted.finalPrice)}`);
           } else if (search.negotiations.length === 0) {
-            setSearchStatus("");
-            setMessages((prev) => [...prev, { role: "assistant", content: "No encontré productos que matcheen. Probá con otra búsqueda." }]);
-            refreshProducts();
+            setSearchStatus("No encontré productos. Probá otra búsqueda.");
+          } else {
+            setSearchStatus("Búsqueda finalizada");
           }
-          setTimeout(() => setSearchStatus(""), 3000);
+          setTimeout(() => setSearchStatus(""), 5000);
           return;
         }
         setTimeout(poll, 1500);
@@ -275,12 +277,12 @@ export default function ExplorePage() {
         if (!entry?.isIntersecting) return;
         setVisibleProductCount((count) => Math.min(count + PRODUCTS_PAGE_SIZE, products.length));
       },
-      { rootMargin: "600px 0px" },
+      { rootMargin: "200px 0px" },
     );
 
     observer.observe(marker);
     return () => observer.disconnect();
-  }, [hasMoreProducts, products.length, visibleProductCount]);
+  }, [hasMoreProducts, products.length]);
 
   async function handleLogout() {
     await logout();
@@ -309,11 +311,10 @@ export default function ExplorePage() {
     const text = input.trim();
     if (!text || streaming) return;
 
-    const msgContent = pendingImage
-      ? `${text}\n[Imagen adjunta: ${pendingImage.name}]`
-      : text;
-    setMessages((prev) => [...prev, { role: "user", content: msgContent }, { role: "assistant", content: "" }]);
+    const msgImagePreview = imagePreview ?? undefined;
+    setMessages((prev) => [...prev, { role: "user", content: text, imageUrl: msgImagePreview }, { role: "assistant", content: "" }]);
     setInput("");
+    setSuggestions([]);
     setStreaming(true);
     const abort = new AbortController();
     abortRef.current = abort;
@@ -350,8 +351,10 @@ export default function ExplorePage() {
         text,
         (chunk) => appendToLastAssistant(chunk),
         (data) => {
+          if (data.suggestions?.length) setSuggestions(data.suggestions);
           if (data.searchId) {
-            appendToLastAssistant("\n\nBuscando productos que matcheen...");
+            setChatCollapsed(true);
+            window.history.replaceState({}, "", `/explore?id=${data.searchId}`);
             pollSearch(data.searchId);
           } else if (data.productId) {
             appendToLastAssistant("\n\nTu publicación está lista.");
@@ -369,6 +372,7 @@ export default function ExplorePage() {
           });
         },
         abort.signal,
+        imageUrl,
       );
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
@@ -583,6 +587,22 @@ export default function ExplorePage() {
     }, 2000);
   }
 
+  function handlePaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          setPendingImage(file);
+          setImagePreview(URL.createObjectURL(file));
+        }
+        return;
+      }
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -593,7 +613,9 @@ export default function ExplorePage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border px-4 h-14 flex items-center justify-between">
-        <img src="/logo.svg" alt="negocIA" className="h-10" />
+        <a href="/explore" onClick={(e) => { e.preventDefault(); handleNewChat(); }}>
+          <img src="/logo.svg" alt="negocIA" className="h-10" />
+        </a>
         <div className="relative">
           <button
             type="button"
@@ -655,11 +677,24 @@ export default function ExplorePage() {
         </div>
       </header>
 
-      {authLoading && (
-        <div className="p-4 text-sm text-muted-foreground">Cargando sesión...</div>
+      {(authLoading || isLoadingProducts) && (
+        <div className="relative">
+          <div className="absolute inset-0 flex items-start justify-center pt-32 z-10 pointer-events-none">
+            <img src="/logo-icon.svg" alt="" className="h-12 w-12 animate-pulse" />
+          </div>
+          <div className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28">
+            {SKELETON_TILES.map((s) => (
+              <div key={s.id} className="mb-3 break-inside-avoid">
+                <div className="rounded-xl bg-muted animate-pulse" style={{ height: s.h }} />
+                <div className="mt-1.5 h-3 w-3/4 rounded bg-muted animate-pulse" />
+                <div className="mt-1 h-2.5 w-1/2 rounded bg-muted animate-pulse" />
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
-      <div className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28">
+      <div className={`p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""}`}>
         {tiles.map((item, i) => (
           <div
             key={item.id}
@@ -668,10 +703,10 @@ export default function ExplorePage() {
           >
             <div
               className="rounded-xl overflow-hidden relative"
-              style={{ backgroundColor: item.color, minHeight: item.imageUrl ? undefined : item.h }}
+              style={{ backgroundColor: item.color, height: item.h }}
             >
               {item.imageUrl ? (
-                <img src={item.imageUrl} alt={item.title} className="w-full h-auto block transition-transform duration-500 ease-out group-hover:scale-110" />
+                <img src={item.imageUrl} alt={item.title} loading="lazy" className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110" />
               ) : (
                 <div style={{ height: item.h }} />
               )}
@@ -905,6 +940,11 @@ export default function ExplorePage() {
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
                         <div className="bg-primary/40 text-amber-950 px-4 py-2 rounded-2xl rounded-br-md max-w-[75%]">
+                          {msg.imageUrl && (
+                            <button type="button" onClick={() => setLightboxSrc(msg.imageUrl!)} className="block mb-2">
+                              <img src={msg.imageUrl} alt="Imagen adjunta" className="max-h-40 rounded-xl object-cover hover:opacity-90 transition-opacity cursor-pointer" />
+                            </button>
+                          )}
                           <p className="text-sm">{msg.content}</p>
                         </div>
                       </div>
@@ -922,6 +962,24 @@ export default function ExplorePage() {
                     )}
                   </div>
                 ))}
+                {suggestions.length > 0 && !streaming && (
+                  <div className="flex flex-wrap gap-2 animate-msg-in">
+                    {suggestions.map((s, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => {
+                          setInput(s);
+                          setSuggestions([]);
+                          setTimeout(() => textareaRef.current?.focus(), 0);
+                        }}
+                        className="px-3 py-1.5 text-xs rounded-full border border-primary/30 text-primary hover:bg-primary/10 transition-colors"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
             </div>
@@ -971,7 +1029,7 @@ export default function ExplorePage() {
               )}
               <form onSubmit={handleSend} className={chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"}>
                 <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
-                <div className={`flex items-end gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-1.5 py-1.5" : "px-1.5"}`}>
+                <div className={`flex items-end gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}>
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -1018,6 +1076,7 @@ export default function ExplorePage() {
                         value={transcript || input}
                         onChange={(e) => { setInput(e.target.value); setTranscript(""); }}
                         onKeyDown={handleKeyDown}
+                        onPaste={handlePaste}
                         placeholder={transcript || "Decile a tu agente qué querés comprar o vender..."}
                         rows={1}
                         disabled={streaming || !!transcript}
