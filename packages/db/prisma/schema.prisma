@@ -44,7 +44,7 @@ model Product {
   id                  String   @id @default(uuid())
   userId              String
   conversationId      String?  @unique
-  title               String
+  title               String   @unique
   description         String
   category            String?
   condition           String?

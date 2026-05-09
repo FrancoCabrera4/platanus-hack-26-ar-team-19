@@ -11,6 +11,7 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
+import { Prisma } from "@prisma/client";
 import prisma from "@repo/db";
 import { upsertProductEmbedding } from "../services/embeddings";
 
@@ -30,6 +31,17 @@ type ScrapeFile = {
   location: string;
   categories: string[];
   listings: ScrapedProduct[];
+};
+
+type ProductSeedRow = {
+  userId: string;
+  title: string;
+  description: string;
+  category: string | null;
+  condition: string | null;
+  askPrice: number;
+  negotiationStrategy: string;
+  imageUrl: string | null;
 };
 
 const DATA_DIR = path.resolve(__dirname, "..", "..", "data");
@@ -69,6 +81,10 @@ async function ensureSellerPool() {
 // Detect "$14.000" or "USD 1,200" style strings — for some FB cards the parser
 // reads the price into `title` and the real product name into `location`.
 const PRICE_LIKE = /^\s*(US\$|U\$S|USD|ARS|\$)?\s*[\d.,]+\s*$/i;
+
+function titleKey(title: string) {
+  return title.toLocaleLowerCase("es-AR").replace(/\s+/g, " ").trim();
+}
 
 function deriveProductFields(item: ScrapedProduct) {
   const askPrice = item.price ?? 0;
@@ -116,20 +132,34 @@ async function main() {
   const wiped = await prisma.product.deleteMany({ where: { userId: { in: sellerIds } } });
   console.log(`[seed:fb] borrados ${wiped.count} products previos`);
 
-  const rows = valid.map((item, i) => {
-    const seller = sellers[i % sellers.length]!;
+  const seenTitles = new Set<string>();
+  const rows: ProductSeedRow[] = [];
+  let duplicateTitles = 0;
+  for (const item of valid) {
     const { askPrice, description, title, negotiationStrategy } = deriveProductFields(item);
-    return {
+    const trimmedTitle = title.slice(0, 200).trim();
+    const key = titleKey(trimmedTitle);
+    if (!trimmedTitle || seenTitles.has(key)) {
+      duplicateTitles += 1;
+      continue;
+    }
+    seenTitles.add(key);
+
+    const seller = sellers[rows.length % sellers.length]!;
+    rows.push({
       userId: seller.id,
-      title: title.slice(0, 200),
+      title: trimmedTitle,
       description,
       category: item.category,
       condition: null,
       askPrice,
       negotiationStrategy,
       imageUrl: item.imageUrl,
-    };
-  });
+    });
+  }
+  if (duplicateTitles > 0) {
+    console.log(`[seed:fb] omitidos ${duplicateTitles} products con título duplicado`);
+  }
 
   if (rows.length === 0) {
     console.log("[seed:fb] nada para insertar.");
@@ -138,7 +168,16 @@ async function main() {
 
   let count = 0;
   for (const row of rows) {
-    const product = await prisma.product.create({ data: row });
+    let product;
+    try {
+      product = await prisma.product.create({ data: row });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        console.warn(`[seed:fb] omitido título ya existente: ${row.title}`);
+        continue;
+      }
+      throw err;
+    }
     await upsertProductEmbedding(product.id, product);
     count += 1;
   }
