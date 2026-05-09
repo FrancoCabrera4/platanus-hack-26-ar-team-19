@@ -28,10 +28,17 @@ interface ProductCandidate {
 }
 
 const DEFAULT_MIN_VECTOR_SIMILARITY = 0.3;
+const DEFAULT_MIN_LLM_MATCH_SCORE = 0.5;
 
 function minVectorSimilarity(): number {
   const configured = Number.parseFloat(process.env.MIN_MATCH_SIMILARITY ?? "");
   if (!Number.isFinite(configured)) return DEFAULT_MIN_VECTOR_SIMILARITY;
+  return Math.min(Math.max(configured, 0), 1);
+}
+
+function minLlmMatchScore(): number {
+  const configured = Number.parseFloat(process.env.MIN_LLM_MATCH_SCORE ?? "");
+  if (!Number.isFinite(configured)) return DEFAULT_MIN_LLM_MATCH_SCORE;
   return Math.min(Math.max(configured, 0), 1);
 }
 
@@ -82,11 +89,13 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
 
   if (candidates.length === 0) return [];
   if (candidates.length === 1) {
-    return candidates.map((candidate) => ({
-      productId: candidate.id,
-      score: candidate.similarity,
+    const only = candidates[0]!;
+    if (only.similarity < minLlmMatchScore()) return [];
+    return [{
+      productId: only.id,
+      score: only.similarity,
       rationale: "Only candidate above the semantic similarity threshold.",
-    }));
+    }];
   }
 
   const scoringInput: ScoringInput = {
@@ -130,8 +139,10 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
 
   // Defensive: keep only candidates we actually queried.
   const validIds = new Set(candidates.map((c) => c.id));
+  const minScore = minLlmMatchScore();
   return scored.matches
     .filter((m) => validIds.has(m.productId))
+    .filter((m) => m.score >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, topN);
 }

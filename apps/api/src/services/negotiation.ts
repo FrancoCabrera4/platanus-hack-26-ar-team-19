@@ -8,7 +8,7 @@ const MAX_TURNS = 8; // 4 buyer turns + 4 seller turns
 
 export interface NegotiationResult {
   negotiationId: string;
-  status: "accepted" | "rejected" | "timed_out" | "error";
+  status: "awaiting_buyer" | "accepted" | "rejected" | "timed_out" | "error";
   finalPrice: number | null;
   reason?: string;
   successful: boolean;
@@ -124,9 +124,9 @@ export async function runNegotiation(searchId: string, productId: string): Promi
             if (lastSellerPrice == null) continue; // can't accept with no seller price yet
             result = {
               negotiationId: negotiation.id,
-              status: "accepted",
+              status: "awaiting_buyer",
               finalPrice: lastSellerPrice,
-              successful: true,
+              successful: false,
               reason: move.message,
             };
             break;
@@ -162,9 +162,9 @@ export async function runNegotiation(searchId: string, productId: string): Promi
             if (lastBuyerPrice == null) continue;
             result = {
               negotiationId: negotiation.id,
-              status: "accepted",
+              status: "awaiting_buyer",
               finalPrice: lastBuyerPrice,
-              successful: true,
+              successful: false,
               reason: move.message,
             };
             break;
@@ -183,44 +183,26 @@ export async function runNegotiation(searchId: string, productId: string): Promi
     };
   }
 
-  // Final safety check before accepting: make sure product is still available
-  // and price is within the buyer's budget. Prevents one product being sold twice.
-  if (result.status === "accepted" && result.finalPrice != null) {
-    const acceptance = await prisma.$transaction(async (tx) => {
-      const fresh = await tx.product.findUnique({ where: { id: productId } });
-      if (!fresh || fresh.status !== "active") {
-        return { ok: false as const, reason: "Product was sold or withdrawn during negotiation." };
-      }
-      if (result.finalPrice! > search.maxPrice) {
-        return { ok: false as const, reason: "Final price above buyer ceiling (safety check)." };
-      }
-      await tx.product.update({
-        where: { id: productId },
-        data: { status: "sold" },
-      });
-      await tx.negotiation.update({
-        where: { id: negotiation.id },
-        data: {
-          status: "accepted",
-          successful: true,
-          finalPrice: result.finalPrice!,
-          reason: result.reason,
-          completedAt: new Date(),
-        },
-      });
-      return { ok: true as const };
-    });
-
-    if (!acceptance.ok) {
+  // If the agents reached an agreement, run the safety checks but stop short of
+  // marking the product as sold — the human buyer still has to confirm the deal.
+  if (result.status === "awaiting_buyer" && result.finalPrice != null) {
+    const fresh = await prisma.product.findUnique({ where: { id: productId } });
+    if (!fresh || fresh.status !== "active") {
       result = {
         negotiationId: negotiation.id,
         status: "rejected",
         finalPrice: null,
         successful: false,
-        reason: acceptance.reason,
+        reason: "Product was sold or withdrawn during negotiation.",
       };
-    } else {
-      return result;
+    } else if (result.finalPrice > search.maxPrice) {
+      result = {
+        negotiationId: negotiation.id,
+        status: "rejected",
+        finalPrice: null,
+        successful: false,
+        reason: "Final price above buyer ceiling (safety check).",
+      };
     }
   }
 
@@ -231,7 +213,7 @@ export async function runNegotiation(searchId: string, productId: string): Promi
       successful: result.successful,
       finalPrice: result.finalPrice,
       reason: result.reason,
-      completedAt: new Date(),
+      completedAt: result.status === "awaiting_buyer" ? null : new Date(),
     },
   });
 

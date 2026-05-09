@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  acceptNegotiation,
   getNegotiation,
   getSearch,
+  rejectNegotiation,
   type NegotiationDetail,
   type SearchDetail,
 } from "@/lib/api";
@@ -25,6 +27,7 @@ const STATUS_COPY: Record<SearchDetail["status"], { label: string; cls: string }
 const NEG_STATUS_COPY: Record<string, { label: string; cls: string }> = {
   pending: { label: "pendiente", cls: "bg-zinc-100 text-zinc-700" },
   running: { label: "negociando", cls: "bg-blue-100 text-blue-800" },
+  awaiting_buyer: { label: "esperando tu confirmación", cls: "bg-amber-100 text-amber-800" },
   accepted: { label: "cerrada", cls: "bg-emerald-100 text-emerald-800" },
   rejected: { label: "rechazada", cls: "bg-rose-100 text-rose-800" },
   timed_out: { label: "sin acuerdo", cls: "bg-zinc-100 text-zinc-700" },
@@ -37,6 +40,18 @@ export default function SearchPage() {
   const [search, setSearch] = useState<SearchDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const stoppedRef = useRef(false);
+
+  const refresh = async () => {
+    try {
+      const s = await getSearch(searchId);
+      setSearch(s);
+      if (s.status === "completed" || s.status === "failed") {
+        stoppedRef.current = true;
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +145,12 @@ export default function SearchPage() {
           ) : (
             <div className="space-y-3">
               {search.negotiations.map((n) => (
-                <NegotiationCard key={n.id} summary={n} maxPrice={search.maxPrice} />
+                <NegotiationCard
+                  key={n.id}
+                  summary={n}
+                  maxPrice={search.maxPrice}
+                  onAfterAction={refresh}
+                />
               ))}
             </div>
           )}
@@ -200,14 +220,45 @@ function OutcomeCard({ negotiation }: { negotiation: SearchDetail["negotiations"
 function NegotiationCard({
   summary,
   maxPrice,
+  onAfterAction,
 }: {
   summary: SearchDetail["negotiations"][number];
   maxPrice: number;
+  onAfterAction: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<NegotiationDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
+  const [actionError, setActionError] = useState<string | null>(null);
   const status = NEG_STATUS_COPY[summary.status] ?? NEG_STATUS_COPY.pending;
+  const awaitingBuyer = summary.status === "awaiting_buyer";
+
+  const handleAccept = async () => {
+    setActionError(null);
+    setActionState("accepting");
+    try {
+      await acceptNegotiation(summary.id);
+      await onAfterAction();
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setActionState("idle");
+    }
+  };
+
+  const handleReject = async () => {
+    setActionError(null);
+    setActionState("rejecting");
+    try {
+      await rejectNegotiation(summary.id);
+      await onAfterAction();
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setActionState("idle");
+    }
+  };
 
   // Auto-poll messages while the negotiation is running and the card is open.
   useEffect(() => {
@@ -266,6 +317,36 @@ function NegotiationCard({
           </span>
         </div>
       </button>
+
+      {awaitingBuyer && summary.finalPrice != null && (
+        <div className="border-t border-amber-200 bg-amber-50/70 px-4 py-3">
+          <p className="text-sm text-amber-900">
+            Los agentes acordaron <span className="font-semibold">{formatARS(summary.finalPrice)}</span>{" "}
+            para <span className="font-medium">{summary.product.title}</span>. ¿Querés cerrar el trato?
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={handleAccept}
+              disabled={actionState !== "idle"}
+              className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {actionState === "accepting" ? "Cerrando…" : "Aceptar"}
+            </button>
+            <button
+              type="button"
+              onClick={handleReject}
+              disabled={actionState !== "idle"}
+              className="inline-flex items-center justify-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+            >
+              {actionState === "rejecting" ? "Rechazando…" : "No aceptar"}
+            </button>
+          </div>
+          {actionError && (
+            <p className="mt-2 text-xs text-rose-700">No pudimos guardar tu respuesta: {actionError}</p>
+          )}
+        </div>
+      )}
 
       {open && (
         <div className="border-t border-black/5 bg-zinc-50/50 px-4 py-3">
