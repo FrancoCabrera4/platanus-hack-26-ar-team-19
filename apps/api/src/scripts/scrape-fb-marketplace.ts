@@ -10,7 +10,9 @@
  * Env:
  *   FB_LOCATION       e.g. "buenosaires" (default)
  *   FB_CATEGORIES     comma-separated slugs; defaults to a sensible set
- *   FB_MAX_PER_CAT    max listings per category (default 40)
+ *   FB_MAX_PER_CAT    max listings per category (default 150)
+ *   FB_SCROLL_ROUNDS  max scroll attempts per category (default scales with target)
+ *   FB_QUERY_TERMS    comma-separated search terms appended to every category
  *   FB_HEADED         "1" to run with a visible browser (default headless)
  *
  * No login required: Marketplace renders public listings before the login
@@ -21,6 +23,8 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Page } from "playwright";
+
+type RawListing = { url: string; text: string; img: string | null };
 
 type ScrapedProduct = {
   category: string;
@@ -35,7 +39,8 @@ type ScrapedProduct = {
 };
 
 const LOCATION = process.env.FB_LOCATION ?? "buenosaires";
-const MAX_PER_CAT = Number(process.env.FB_MAX_PER_CAT ?? 40);
+const MAX_PER_CAT = Number(process.env.FB_MAX_PER_CAT ?? 150);
+const MAX_SCROLL_ROUNDS = Number(process.env.FB_SCROLL_ROUNDS ?? Math.max(18, Math.ceil(MAX_PER_CAT / 5)));
 const DEFAULT_CATEGORIES = [
   "vehicles",
   "electronics",
@@ -45,7 +50,20 @@ const DEFAULT_CATEGORIES = [
   "sporting-goods",
   "toys-games",
 ];
+const CATEGORY_QUERY_TERMS: Record<string, string[]> = {
+  vehicles: ["auto", "moto", "camioneta", "bicicleta", "scooter", "casco", "repuestos"],
+  electronics: ["iphone", "samsung", "notebook", "monitor", "playstation", "auriculares", "tablet"],
+  apparel: ["zapatillas", "campera", "vestido", "remera", "jean", "bolso", "ropa"],
+  "home-goods": ["sillon", "mesa", "silla", "cama", "heladera", "mueble", "decoracion"],
+  "musical-instruments": ["guitarra", "bajo", "teclado", "bateria", "amplificador", "microfono", "pedal"],
+  "sporting-goods": ["pesas", "bicicleta", "botines", "raqueta", "pelota", "fitness", "camping"],
+  "toys-games": ["juguetes", "lego", "muñeca", "playmobil", "juego de mesa", "cartas", "consola"],
+};
 const CATEGORIES = (process.env.FB_CATEGORIES ?? DEFAULT_CATEGORIES.join(","))
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const EXTRA_QUERY_TERMS = (process.env.FB_QUERY_TERMS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -88,23 +106,8 @@ async function dismissLoginDialog(page: Page) {
   }
 }
 
-async function autoScroll(page: Page, rounds: number) {
-  for (let i = 0; i < rounds; i++) {
-    await page.mouse.wheel(0, 4000);
-    await page.waitForTimeout(1200);
-    if (i === 1) await dismissLoginDialog(page);
-  }
-}
-
-async function scrapeCategory(page: Page, category: string): Promise<ScrapedProduct[]> {
-  const url = `https://www.facebook.com/marketplace/${LOCATION}/${category}/`;
-  console.log(`[scrape] ${category} → ${url}`);
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
-  await page.waitForTimeout(3500);
-  await dismissLoginDialog(page);
-  await autoScroll(page, 6);
-
-  const raw = await page.$$eval('a[href*="/marketplace/item/"]', (anchors) => {
+async function readListingAnchors(page: Page): Promise<RawListing[]> {
+  return page.$$eval('a[href*="/marketplace/item/"]', (anchors) => {
     const seen = new Set<string>();
     const out: { url: string; text: string; img: string | null }[] = [];
     for (const a of anchors as HTMLAnchorElement[]) {
@@ -120,30 +123,99 @@ async function scrapeCategory(page: Page, category: string): Promise<ScrapedProd
     }
     return out;
   });
+}
 
+async function collectListingAnchors(page: Page, target: number) {
+  let raw = await readListingAnchors(page);
+  let lastCount = raw.length;
+  let stalledRounds = 0;
+
+  for (let i = 0; i < MAX_SCROLL_ROUNDS && raw.length < target; i++) {
+    await page.mouse.wheel(0, 4000);
+    await page.waitForTimeout(1200);
+    if (i === 1 || i % 5 === 0) await dismissLoginDialog(page);
+
+    raw = await readListingAnchors(page);
+    if (raw.length <= lastCount) {
+      stalledRounds += 1;
+    } else {
+      stalledRounds = 0;
+      lastCount = raw.length;
+    }
+    if (stalledRounds >= 5) break;
+  }
+
+  return raw;
+}
+
+function titleKey(title: string) {
+  return title.toLocaleLowerCase("es-AR").replace(/\s+/g, " ").trim();
+}
+
+function categoryUrls(category: string): string[] {
+  const base = `https://www.facebook.com/marketplace/${LOCATION}/${category}/`;
+  const terms = [...(CATEGORY_QUERY_TERMS[category] ?? [category]), ...EXTRA_QUERY_TERMS];
+  const searchUrls = terms.map(
+    (term) => `https://www.facebook.com/marketplace/${LOCATION}/search/?query=${encodeURIComponent(term)}`,
+  );
+  return [base, ...searchUrls];
+}
+
+function parseListing(category: string, item: RawListing, scrapedAt: string): ScrapedProduct | null {
+  const lines = item.text.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  const priceLine = lines.find((l) => /\d/.test(l) && /(\$|usd|ars|gratis|free)/i.test(l)) ?? lines[0]!;
+  const priceIdx = lines.indexOf(priceLine);
+  const title = lines[priceIdx + 1] ?? lines.find((l, i) => i !== priceIdx) ?? "";
+  const location = lines[priceIdx + 2] ?? null;
+  const { price, currency } = parsePrice(priceLine);
+  if (!title || price === null) return null;
+
+  return {
+    category,
+    url: item.url,
+    title,
+    priceRaw: priceLine,
+    price,
+    currency,
+    location,
+    imageUrl: item.img,
+    scrapedAt,
+  };
+}
+
+async function scrapeCategory(page: Page, category: string): Promise<ScrapedProduct[]> {
   const scrapedAt = new Date().toISOString();
   const listings: ScrapedProduct[] = [];
-  for (const item of raw.slice(0, MAX_PER_CAT)) {
-    const lines = item.text.split("\n").map((s) => s.trim()).filter(Boolean);
-    if (lines.length === 0) continue;
-    const priceLine = lines.find((l) => /\d/.test(l) && /(\$|usd|ars|gratis|free)/i.test(l)) ?? lines[0]!;
-    const priceIdx = lines.indexOf(priceLine);
-    const title = lines[priceIdx + 1] ?? lines.find((l, i) => i !== priceIdx) ?? "";
-    const location = lines[priceIdx + 2] ?? null;
-    const { price, currency } = parsePrice(priceLine);
-    if (!title || price === null) continue;
-    listings.push({
-      category,
-      url: item.url,
-      title,
-      priceRaw: priceLine,
-      price,
-      currency,
-      location,
-      imageUrl: item.img,
-      scrapedAt,
-    });
+  const seenUrls = new Set<string>();
+  const seenTitles = new Set<string>();
+
+  for (const url of categoryUrls(category)) {
+    console.log(`[scrape] ${category} → ${url}`);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await page.waitForTimeout(3500);
+    await dismissLoginDialog(page);
+
+    const raw = await collectListingAnchors(page, MAX_PER_CAT * 2);
+    let addedFromSource = 0;
+    for (const item of raw) {
+      if (seenUrls.has(item.url)) continue;
+      const listing = parseListing(category, item, scrapedAt);
+      if (!listing) continue;
+      const key = titleKey(listing.title);
+      if (seenTitles.has(key)) continue;
+
+      seenUrls.add(item.url);
+      seenTitles.add(key);
+      listings.push(listing);
+      addedFromSource += 1;
+      if (listings.length >= MAX_PER_CAT) break;
+    }
+
+    console.log(`[scrape] ${category}: +${addedFromSource} from source (${listings.length}/${MAX_PER_CAT})`);
+    if (listings.length >= MAX_PER_CAT) break;
   }
+
   console.log(`[scrape] ${category}: ${listings.length} listings`);
   return listings;
 }
