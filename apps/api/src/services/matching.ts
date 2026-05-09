@@ -13,14 +13,19 @@ export interface MatchCandidate {
 
 interface ScoringInput {
   query: string;
+  expandedQuery?: string;
   requirements?: string | null;
   category?: string | null;
+  maxPrice: number;
+  negotiationStrategy?: string | null;
+  imageDescription?: string | null;
   candidates: {
     id: string;
     title: string;
     description: string;
     category?: string | null;
     askPrice: number;
+    vectorSimilarity: number;
   }[];
 }
 
@@ -35,11 +40,11 @@ interface ProductCandidate {
   similarity: number;
 }
 
-const DEFAULT_MIN_VECTOR_SIMILARITY = 0.3;
+const DEFAULT_MIN_VECTOR_SIMILARITY = 0.25;
 const DEFAULT_MIN_LLM_MATCH_SCORE = 0.5;
-<<<<<<< HEAD
-const MAX_CANDIDATES = 25;
-const FALLBACK_VECTOR_CANDIDATES = 10;
+const MAX_CANDIDATES = 30;
+const FALLBACK_VECTOR_CANDIDATES = 15;
+const VISION_CONCURRENCY = 5;
 const STOP_WORDS = new Set([
   "con",
   "del",
@@ -52,9 +57,10 @@ const STOP_WORDS = new Set([
   "que",
   "una",
   "uno",
+  "busco",
+  "quiero",
+  "necesito",
 ]);
-=======
->>>>>>> UriGandel
 
 function minVectorSimilarity(): number {
   const configured = Number.parseFloat(process.env.MIN_MATCH_SIMILARITY ?? "");
@@ -67,6 +73,62 @@ function minLlmMatchScore(): number {
   if (!Number.isFinite(configured)) return DEFAULT_MIN_LLM_MATCH_SCORE;
   return Math.min(Math.max(configured, 0), 1);
 }
+
+// --- Query expansion ---
+
+const EXPANSION_SCHEMA = {
+  type: "object",
+  properties: {
+    expanded: {
+      type: "string",
+      description: "Expanded search text with synonyms and related terms",
+    },
+    inferredCategory: { type: "string", description: "Best matching category" },
+  },
+  required: ["expanded"],
+} as const;
+
+async function expandQuery(
+  query: string,
+  requirements?: string | null,
+  category?: string | null,
+): Promise<{ expanded: string; inferredCategory: string | null }> {
+  try {
+    const result = await generateJSON<{
+      expanded: string;
+      inferredCategory?: string;
+    }>({
+      system: `You are a search query expander for an Argentine marketplace. Given a buyer's search query, expand it with:
+- Spanish synonyms and common variations (e.g. "campera" → "campera jacket abrigo chamarra")
+- Brand name variations (e.g. "North Face" → "North Face TNF The North Face NF")
+- Related product terms (e.g. "PlayStation" → "PlayStation PS5 PS4 consola gaming")
+- Common misspellings people search for
+- Both Spanish and English terms when applicable
+
+Categories available: electronics, vehicles, apparel, furniture, home-goods, sporting-goods, musical-instruments, toys-games
+
+Return the expanded text as a single string (NOT a list). Also infer the best category if not provided.
+Keep it concise — max 50 words for expanded text.`,
+      history: [
+        {
+          role: "user",
+          content: `Query: "${query}"${requirements ? `\nRequirements: "${requirements}"` : ""}${category ? `\nCategory hint: "${category}"` : ""}`,
+        },
+      ],
+      jsonSchema: EXPANSION_SCHEMA,
+      temperature: 0.3,
+    });
+    return {
+      expanded: result.expanded,
+      inferredCategory: result.inferredCategory ?? null,
+    };
+  } catch (err) {
+    log("Query expansion failed:", (err as Error).message);
+    return { expanded: query, inferredCategory: null };
+  }
+}
+
+// --- Scoring ---
 
 const SCORING_SCHEMA = {
   type: "object",
@@ -89,84 +151,158 @@ const SCORING_SCHEMA = {
 
 /**
  * Find candidate products that could fulfill a buyer search.
- * Step 1: pgvector retrieval over product descriptions with coarse price/category filters.
- * Step 2: LLM text re-rank for semantic relevance.
- * Step 3: Vision re-rank — verify product images actually match what the buyer wants.
+ *
+ * Pipeline:
+ *   1. Query expansion — LLM generates synonyms and related terms
+ *   2. Multi-embedding retrieval — embed original + expanded query, merge results
+ *   3. Lexical retrieval — ILIKE search for exact term matches
+ *   4. LLM re-rank — score candidates considering relevance, price, buyer intent
+ *   5. Vision re-rank — parallel image verification against buyer's description
  */
 export async function findMatches(
   searchId: string,
-  topN = 3,
+  topN = 5,
 ): Promise<MatchCandidate[]> {
   const search = await prisma.buyerSearch.findUnique({
     where: { id: searchId },
   });
   if (!search) throw new Error(`Search ${searchId} not found`);
 
-  const ceiling = search.maxPrice * 1.2;
+  const ceiling = search.maxPrice * 1.3;
   const category = normalizeCategory(search.category);
-  const searchText = [
+  const imageDescription =
+    (search as typeof search & { imageDescription?: string | null })
+      .imageDescription ?? null;
+
+  // Step 1: Query expansion
+  const { expanded, inferredCategory } = await expandQuery(
     search.query,
     search.requirements,
-    category ? `Category: ${category}` : null,
-    search.imageDescription ? `Visual: ${search.imageDescription}` : null,
-  ].filter(Boolean).join("\n");
-  const { values } = await embedText(searchText);
-  const vector = toVectorLiteral(values);
+    category,
+  );
+  const effectiveCategory = category ?? inferredCategory;
+  log(
+    `[matching] Query: "${search.query}" → Expanded: "${expanded}" | Category: ${effectiveCategory}`,
+  );
+
+  // Step 2: Multi-embedding retrieval (original + expanded in parallel)
+  const originalSearchText = [
+    search.query,
+    search.requirements,
+    effectiveCategory ? `Category: ${effectiveCategory}` : null,
+    imageDescription ? `Visual: ${imageDescription}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const expandedSearchText = [
+    expanded,
+    search.requirements,
+    imageDescription ? `Visual: ${imageDescription}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const [originalEmbed, expandedEmbed] = await Promise.all([
+    embedText(originalSearchText),
+    embedText(expandedSearchText),
+  ]);
+
+  const originalVector = toVectorLiteral(originalEmbed.values);
+  const expandedVector = toVectorLiteral(expandedEmbed.values);
+
+  // Step 3: Parallel retrieval — vector (original + expanded) + lexical
+  const [
+    originalVectorCandidates,
+    expandedVectorCandidates,
+    lexicalCandidates,
+  ] = await Promise.all([
+    findCandidatesWithCategoryFallback(effectiveCategory, (cat) =>
+      findVectorCandidates(originalVector, ceiling, cat),
+    ),
+    findCandidatesWithCategoryFallback(effectiveCategory, (cat) =>
+      findVectorCandidates(expandedVector, ceiling, cat),
+    ),
+    findCandidatesWithCategoryFallback(effectiveCategory, (cat) =>
+      findLexicalCandidates(search.query, search.requirements, ceiling, cat),
+    ),
+  ]);
 
   let candidates = mergeCandidates(
-    await findCandidatesWithCategoryFallback(category, (candidateCategory) =>
-      findVectorCandidates(vector, ceiling, candidateCategory),
-    ),
-    await findCandidatesWithCategoryFallback(category, (candidateCategory) =>
-      findLexicalCandidates(
-        search.query,
-        search.requirements,
-        ceiling,
-        candidateCategory,
-      ),
-    ),
+    originalVectorCandidates,
+    expandedVectorCandidates,
+    lexicalCandidates,
   );
 
   if (candidates.length === 0) {
-    candidates = await findNearestVectorCandidates(vector, ceiling);
+    const [fallbackOrig, fallbackExp] = await Promise.all([
+      findNearestVectorCandidates(originalVector, ceiling),
+      findNearestVectorCandidates(expandedVector, ceiling),
+    ]);
+    candidates = mergeCandidates(fallbackOrig, fallbackExp);
   }
+
+  log(`[matching] Found ${candidates.length} candidates after retrieval`);
 
   if (candidates.length === 0) return [];
   if (candidates.length === 1) {
     const only = candidates[0]!;
     if (only.similarity < minLlmMatchScore()) return [];
-    return [{
-      productId: only.id,
-      score: only.similarity,
-      rationale: "Only candidate above the semantic similarity threshold.",
-    }];
+    return [
+      {
+        productId: only.id,
+        score: only.similarity,
+        rationale: "Only candidate above the semantic similarity threshold.",
+      },
+    ];
   }
 
-  // Step 2: LLM text re-rank
+  // Step 4: LLM re-rank with full buyer context
   const scoringInput: ScoringInput = {
     query: search.query,
+    expandedQuery: expanded,
     requirements: search.requirements,
-    category,
+    category: effectiveCategory,
+    maxPrice: search.maxPrice,
+    negotiationStrategy: search.negotiationStrategy,
+    imageDescription,
     candidates: candidates.map((c) => ({
       id: c.id,
       title: c.title,
       description: c.description,
       category: c.category,
       askPrice: c.askPrice,
+      vectorSimilarity: Math.round(c.similarity * 1000) / 1000,
     })),
   };
 
   let scored: { matches: MatchCandidate[] };
   try {
     scored = await generateJSON<{ matches: MatchCandidate[] }>({
-      system:
-        "You are a matching engine for a marketplace. Score how well each product fits the buyer's request, " +
-        "considering both semantic relevance and price reasonableness. Return a score in [0,1] for each candidate. " +
-        "Be strict: only score above 0.5 if the product is genuinely what the buyer is looking for.",
+      system: `You are an expert product matching engine for an Argentine marketplace (prices in ARS).
+
+Score how well each candidate product matches the buyer's search. Consider ALL of these factors:
+
+1. **Semantic relevance** (most important): Is this genuinely what the buyer wants? A "campera North Face" search should NOT match random jackets from other brands.
+2. **Brand matching**: If buyer specified a brand, matching brand gets a big boost. Wrong brand = low score.
+3. **Price reasonableness**: Products near the buyer's maxPrice are ideal. Products much cheaper might be suspicious (bad condition?). Products slightly above budget can still score if they're a great match.
+4. **Category fit**: Does the product belong in the right category?
+5. **Condition/requirements**: Does it meet the buyer's stated requirements?
+6. **Vector similarity hint**: Use the vectorSimilarity as a starting point but override it with your judgment.
+
+Scoring guide:
+- 0.9-1.0: Perfect match — exactly what buyer wants, right brand, right price range
+- 0.7-0.89: Strong match — same product type, minor differences
+- 0.5-0.69: Decent match — related product, could work
+- 0.3-0.49: Weak match — tangentially related
+- 0.0-0.29: Poor match — wrong product entirely
+
+Be STRICT. Most products should score below 0.5. Only genuine matches deserve high scores.
+Return ALL candidates scored, sorted by score descending.`,
       history: [
         {
           role: "user",
-          content: `Buyer wants:\n${JSON.stringify(scoringInput, null, 2)}\n\nReturn matches sorted by score descending.`,
+          content: `Buyer search:\n${JSON.stringify(scoringInput, null, 2)}\n\nScore each candidate.`,
         },
       ],
       jsonSchema: SCORING_SCHEMA,
@@ -180,87 +316,130 @@ export async function findMatches(
     scored = {
       matches: candidates.map((c) => ({
         productId: c.id,
-        score: c.similarity,
-        rationale: "Fallback vector similarity score.",
+        score: priceAdjustedScore(c.similarity, c.askPrice, search.maxPrice),
+        rationale: "Fallback: vector similarity + price adjustment.",
       })),
     };
   }
 
   const validIds = new Set(candidates.map((c) => c.id));
   const minScore = minLlmMatchScore();
-<<<<<<< HEAD
   let textRanked = scored.matches
-=======
-  return scored.matches
->>>>>>> UriGandel
     .filter((m) => validIds.has(m.productId))
     .filter((m) => m.score >= minScore)
     .sort((a, b) => b.score - a.score)
-    .slice(0, Math.max(topN * 2, 6));
+    .slice(0, Math.max(topN * 2, 8));
 
   if (textRanked.length === 0) {
     log(
       "Match scoring returned no usable candidates; falling back to retrieval scores.",
     );
-    return candidatesToMatches(candidates).slice(0, topN);
+    return candidatesToMatches(candidates, search.maxPrice).slice(0, topN);
   }
 
-  // Step 3: Vision re-rank — verify product images match the buyer's intent
+  // Step 5: Vision re-rank — parallel image verification
   const candidateMap = new Map(candidates.map((c) => [c.id, c]));
-  const buyerDescription = [
-    search.query,
-    search.requirements,
-    search.imageDescription,
-  ].filter(Boolean).join(". ");
+  const buyerDescription = [search.query, search.requirements, imageDescription]
+    .filter(Boolean)
+    .join(". ");
 
   textRanked = await visionRerank(textRanked, candidateMap, buyerDescription);
 
+  log(
+    `[matching] Final ranking: ${textRanked
+      .slice(0, topN)
+      .map((m) => `${m.productId.slice(0, 8)}=${m.score.toFixed(2)}`)
+      .join(", ")}`,
+  );
+
   return textRanked.slice(0, topN);
 }
+
+// --- Price-aware scoring ---
+
+function priceAdjustedScore(
+  baseSimilarity: number,
+  askPrice: number,
+  maxPrice: number,
+): number {
+  if (maxPrice <= 0) return baseSimilarity;
+  const ratio = askPrice / maxPrice;
+  let priceBonus = 0;
+  if (ratio <= 1.0) {
+    priceBonus = 0.1 * (1 - Math.abs(ratio - 0.7));
+  } else if (ratio <= 1.3) {
+    priceBonus = (-0.05 * (ratio - 1.0)) / 0.3;
+  } else {
+    priceBonus = -0.15;
+  }
+  return Math.max(0, Math.min(1, baseSimilarity + priceBonus));
+}
+
+// --- Vision re-ranking (parallel with concurrency limit) ---
 
 async function visionRerank(
   matches: MatchCandidate[],
   candidateMap: Map<string, ProductCandidate>,
   buyerDescription: string,
 ): Promise<MatchCandidate[]> {
-  const results: MatchCandidate[] = [];
+  const withImages = matches.filter(
+    (m) => candidateMap.get(m.productId)?.imageUrl,
+  );
+  const withoutImages = matches.filter(
+    (m) => !candidateMap.get(m.productId)?.imageUrl,
+  );
 
-  for (const match of matches) {
-    const candidate = candidateMap.get(match.productId);
-    if (!candidate?.imageUrl) {
-      results.push(match);
-      continue;
-    }
+  const chunks: MatchCandidate[][] = [];
+  for (let i = 0; i < withImages.length; i += VISION_CONCURRENCY) {
+    chunks.push(withImages.slice(i, i + VISION_CONCURRENCY));
+  }
 
-    try {
-      const visionResult = await verifyProductMatch(
-        candidate.imageUrl,
-        buyerDescription,
-        candidate.title,
-      );
+  const visionResults: MatchCandidate[] = [];
 
-      if (visionResult.matches) {
-        results.push({
+  for (const chunk of chunks) {
+    const results = await Promise.allSettled(
+      chunk.map(async (match) => {
+        const candidate = candidateMap.get(match.productId)!;
+        const visionResult = await verifyProductMatch(
+          candidate.imageUrl!,
+          buyerDescription,
+          candidate.title,
+        );
+
+        if (visionResult.matches) {
+          return {
+            ...match,
+            score: match.score * (0.6 + visionResult.confidence * 0.4),
+            rationale: `${match.rationale} | Vision OK (${Math.round(visionResult.confidence * 100)}%): ${visionResult.reason}`,
+          };
+        }
+        log(`[vision] Rejected "${candidate.title}": ${visionResult.reason}`);
+        return {
           ...match,
-          score: match.score * (0.5 + visionResult.confidence * 0.5),
-          rationale: `${match.rationale} | Vision: ${visionResult.reason}`,
-        });
+          score: match.score * 0.15,
+          rationale: `${match.rationale} | Vision REJECTED: ${visionResult.reason}`,
+        };
+      }),
+    );
+
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        visionResults.push(result.value);
       } else {
-        log(`Vision rejected "${candidate.title}": ${visionResult.reason}`);
-        results.push({
-          ...match,
-          score: match.score * 0.2,
-          rationale: `${match.rationale} | Vision rejected: ${visionResult.reason}`,
-        });
+        log("[vision] Error:", result.reason);
       }
-    } catch (err) {
-      log("Vision rerank failed for", candidate.id, (err as Error).message);
-      results.push(match);
     }
   }
 
-  return results.sort((a, b) => b.score - a.score);
+  const processedIds = new Set(visionResults.map((r) => r.productId));
+  const unprocessed = withImages.filter((m) => !processedIds.has(m.productId));
+
+  return [...visionResults, ...unprocessed, ...withoutImages].sort(
+    (a, b) => b.score - a.score,
+  );
 }
+
+// --- SQL retrieval ---
 
 async function findVectorCandidates(
   vector: string,
@@ -268,7 +447,7 @@ async function findVectorCandidates(
   category: string | null,
 ): Promise<ProductCandidate[]> {
   const categoryFilter = category
-    ? Prisma.sql`AND p."category" = ${category}`
+    ? Prisma.sql`AND LOWER(p."category") = LOWER(${category})`
     : Prisma.empty;
 
   const minimumSimilarity = minVectorSimilarity();
@@ -345,10 +524,10 @@ async function findLexicalCandidates(
   );
   const termHitScores = patterns.map(
     (pattern) =>
-      Prisma.sql`CASE WHEN p."title" ILIKE ${pattern} ESCAPE '\\' OR p."description" ILIKE ${pattern} ESCAPE '\\' THEN 1 ELSE 0 END`,
+      Prisma.sql`CASE WHEN p."title" ILIKE ${pattern} ESCAPE '\\' THEN 2 WHEN p."description" ILIKE ${pattern} ESCAPE '\\' THEN 1 ELSE 0 END`,
   );
   const categoryFilter = category
-    ? Prisma.sql`AND p."category" = ${category}`
+    ? Prisma.sql`AND LOWER(p."category") = LOWER(${category})`
     : Prisma.empty;
 
   return prisma.$queryRaw<ProductCandidate[]>(Prisma.sql`
@@ -374,25 +553,24 @@ async function findLexicalCandidates(
       "category",
       "imageUrl",
       "askPrice",
-      1 - LEAST(0.95, 0.35 + ("termHits" / ${terms.length}) * 0.55) AS "distance",
-      LEAST(0.95, 0.35 + ("termHits" / ${terms.length}) * 0.55) AS "similarity"
+      1 - LEAST(0.95, 0.35 + ("termHits" / ${terms.length * 2}) * 0.55) AS "distance",
+      LEAST(0.95, 0.35 + ("termHits" / ${terms.length * 2}) * 0.55) AS "similarity"
     FROM lexical_candidates
     ORDER BY "similarity" DESC, "askPrice" ASC
     LIMIT ${MAX_CANDIDATES}
   `);
 }
 
+// --- Helpers ---
+
 async function findCandidatesWithCategoryFallback(
   category: string | null,
   findCandidates: (category: string | null) => Promise<ProductCandidate[]>,
 ): Promise<ProductCandidate[]> {
   const candidates = await findCandidates(category);
-
-  // The buyer agent and seed sources don't always share category vocabulary.
   if (candidates.length === 0 && category) {
     return findCandidates(null);
   }
-
   return candidates;
 }
 
@@ -413,10 +591,17 @@ function mergeCandidates(
     .slice(0, MAX_CANDIDATES);
 }
 
-function candidatesToMatches(candidates: ProductCandidate[]): MatchCandidate[] {
+function candidatesToMatches(
+  candidates: ProductCandidate[],
+  maxPrice: number,
+): MatchCandidate[] {
   return candidates.map((candidate) => ({
     productId: candidate.id,
-    score: candidate.similarity,
+    score: priceAdjustedScore(
+      candidate.similarity,
+      candidate.askPrice,
+      maxPrice,
+    ),
     rationale: "Fallback retrieval score.",
   }));
 }
@@ -436,7 +621,7 @@ function searchTerms(query: string, requirements: string | null): string[] {
 
   return Array.from(
     new Set(terms.filter((term) => term.length >= 3 && !STOP_WORDS.has(term))),
-  ).slice(0, 8);
+  ).slice(0, 10);
 }
 
 function escapeLike(term: string): string {
