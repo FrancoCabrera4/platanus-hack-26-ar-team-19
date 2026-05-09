@@ -1,18 +1,179 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// Prisma schema for the agentic marketplace.
+// SQLite for hackathon speed; same Prisma codegen as Postgres.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id String @id @default(uuid())
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  role      String   // "seller" | "buyer" | "both"
+  createdAt DateTime @default(now())
+
+  listings           Listing[]
+  sellerConvs        SellerConversation[]
+  buyerConvs         BuyerConversation[]
+  buyerSearches      BuyerSearch[]
+  dealsAsSeller      Deal[]               @relation("DealsAsSeller")
+  dealsAsBuyer       Deal[]               @relation("DealsAsBuyer")
+}
+
+// A product the seller wants to sell. minPrice is the seller's hidden
+// reservation price (never shown to buyers). askPrice is the public price.
+model Listing {
+  id             String   @id @default(uuid())
+  sellerId       String
+  title          String
+  description    String
+  category       String?
+  condition      String?
+  askPrice       Float
+  minPrice       Float
+  maxPrice       Float?
+  strategyNotes  String?
+  status         String   @default("active") // active | sold | withdrawn
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  seller         User                  @relation(fields: [sellerId], references: [id])
+  conversation   SellerConversation?
+  negotiations   Negotiation[]
+  deals          Deal[]
+}
+
+// Onboarding chat where the seller describes the product.
+model SellerConversation {
+  id        String   @id @default(uuid())
+  sellerId  String
+  listingId String?  @unique
+  status    String   @default("in_progress") // in_progress | completed
+  state     String   @default("{}") // JSON of fields extracted so far
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  seller   User                   @relation(fields: [sellerId], references: [id])
+  listing  Listing?               @relation(fields: [listingId], references: [id])
+  messages ConversationMessage[]
+}
+
+// What a buyer is looking for. maxPrice is the buyer's hidden reservation
+// price (never shown to sellers). minPrice is just an aspirational floor.
+model BuyerSearch {
+  id                String   @id @default(uuid())
+  buyerId           String
+  query             String
+  requirements      String?
+  category          String?
+  minPrice          Float?
+  maxPrice          Float
+  timeBudgetSeconds Int      @default(120)
+  status            String   @default("collecting")
+    // collecting | ready | running | completed | failed
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  buyer        User                @relation(fields: [buyerId], references: [id])
+  conversation BuyerConversation?
+  negotiations Negotiation[]
+  deals        Deal[]
+  jobs         Job[]
+}
+
+// Onboarding chat where the buyer describes what they want.
+model BuyerConversation {
+  id        String   @id @default(uuid())
+  buyerId   String
+  searchId  String?  @unique
+  status    String   @default("in_progress")
+  state     String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  buyer    User                   @relation(fields: [buyerId], references: [id])
+  search   BuyerSearch?           @relation(fields: [searchId], references: [id])
+  messages ConversationMessage[]
+}
+
+// Generic message used by both onboarding conversations.
+model ConversationMessage {
+  id                  String   @id @default(uuid())
+  sellerConvId        String?
+  buyerConvId         String?
+  role                String   // "user" | "assistant" | "system"
+  content             String
+  createdAt           DateTime @default(now())
+
+  sellerConv SellerConversation? @relation(fields: [sellerConvId], references: [id], onDelete: Cascade)
+  buyerConv  BuyerConversation?  @relation(fields: [buyerConvId], references: [id], onDelete: Cascade)
+}
+
+// One negotiation = one (search, listing) pair worked through by two LLM agents.
+model Negotiation {
+  id          String    @id @default(uuid())
+  searchId    String
+  listingId   String
+  status      String    @default("pending")
+    // pending | running | accepted | rejected | timed_out | error
+  finalPrice  Float?
+  reason      String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  search   BuyerSearch          @relation(fields: [searchId], references: [id])
+  listing  Listing              @relation(fields: [listingId], references: [id])
+  messages NegotiationMessage[]
+  deal     Deal?
+}
+
+model NegotiationMessage {
+  id            String   @id @default(uuid())
+  negotiationId String
+  side          String   // "seller" | "buyer"
+  action        String   // "offer" | "counter" | "accept" | "reject" | "open"
+  proposedPrice Float?
+  content       String
+  createdAt     DateTime @default(now())
+
+  negotiation Negotiation @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+}
+
+model Deal {
+  id            String   @id @default(uuid())
+  negotiationId String   @unique
+  listingId     String
+  searchId      String
+  buyerId       String
+  sellerId      String
+  finalPrice    Float
+  createdAt     DateTime @default(now())
+
+  negotiation Negotiation @relation(fields: [negotiationId], references: [id])
+  listing     Listing     @relation(fields: [listingId], references: [id])
+  search      BuyerSearch @relation(fields: [searchId], references: [id])
+  buyer       User        @relation("DealsAsBuyer", fields: [buyerId], references: [id])
+  seller      User        @relation("DealsAsSeller", fields: [sellerId], references: [id])
+}
+
+// Background job tracking for async match+negotiate runs.
+model Job {
+  id        String   @id @default(uuid())
+  type      String   // "run_search"
+  status    String   @default("queued")
+    // queued | running | succeeded | failed
+  searchId  String?
+  payload   String   @default("{}")
+  result    String?
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  search BuyerSearch? @relation(fields: [searchId], references: [id])
 }

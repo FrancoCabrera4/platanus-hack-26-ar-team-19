@@ -1,0 +1,76 @@
+import { generateJSON, type ChatTurn } from "../llm/gemini";
+
+export interface SellerListingDraft {
+  title?: string;
+  description?: string;
+  category?: string;
+  condition?: string;
+  askPrice?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  strategyNotes?: string;
+}
+
+export interface SellerOnboardingTurn {
+  reply: string;
+  state: SellerListingDraft;
+  done: boolean;
+}
+
+const SYSTEM = `You are an onboarding agent for a marketplace. The user is a SELLER who wants to list a product.
+Your goal is to interview them efficiently and extract:
+  - title: short product title
+  - description: 1–3 sentences describing the item, condition, what's included
+  - category: e.g. electronics, furniture, clothing, vehicles, books, etc.
+  - condition: new | like-new | good | fair | poor
+  - askPrice: the public list price (number, in the local currency, default ARS)
+  - minPrice: the LOWEST price they will accept (kept private from buyers — this is their floor)
+  - maxPrice: optional aspirational ceiling
+  - strategyNotes: free-text notes about negotiation strategy (e.g. "rush sale", "willing to bundle")
+
+Rules:
+  - Ask ONE focused question per turn. Do not dump a long list of questions.
+  - Be friendly, concise, and natural. Match the user's language (English/Spanish).
+  - Update the state with every new fact. Never invent values; only fill in what the user told you.
+  - Once you have at minimum: title, description, askPrice, minPrice, mark done=true.
+  - If done=true, your reply should briefly summarize the listing and confirm publication.
+  - Always respond in JSON matching the provided schema.`;
+
+const SCHEMA = {
+  type: "object",
+  properties: {
+    reply: { type: "string", description: "Assistant message shown to the seller" },
+    state: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        category: { type: "string" },
+        condition: { type: "string" },
+        askPrice: { type: "number" },
+        minPrice: { type: "number" },
+        maxPrice: { type: "number" },
+        strategyNotes: { type: "string" },
+      },
+    },
+    done: { type: "boolean" },
+  },
+  required: ["reply", "state", "done"],
+} as const;
+
+export async function runSellerOnboardingTurn(
+  history: ChatTurn[],
+  currentState: SellerListingDraft,
+): Promise<SellerOnboardingTurn> {
+  const stateNote: ChatTurn = {
+    role: "system",
+    content: `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`,
+  };
+
+  return generateJSON<SellerOnboardingTurn>({
+    system: SYSTEM + "\n\n" + stateNote.content,
+    history,
+    jsonSchema: SCHEMA,
+    temperature: 0.6,
+  });
+}
