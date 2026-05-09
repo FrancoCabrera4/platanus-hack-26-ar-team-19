@@ -137,7 +137,7 @@ Each `NegotiationMessage` has `side`, `action`, `proposedPrice`, `content`, and 
 
 ## Matching & Negotiation
 
-Matching embeds the buyer search text, retrieves nearest product embeddings with pgvector, applies coarse price/category filters, and then asks the LLM to re-rank the top candidates. If LLM re-ranking fails, vector similarity is used as the fallback score.
+Matching embeds the buyer search text, retrieves nearest product embeddings with pgvector, applies coarse price/category filters, drops products below the minimum vector similarity threshold (`MIN_MATCH_SIMILARITY`, default `0.3`), and then asks the LLM to re-rank the remaining candidates. If LLM re-ranking fails, vector similarity is used as the fallback score.
 
 Negotiation runs up to 8 turns, buyer opens, and the first accept closes at the other side's last quoted price. The buyer `maxPrice` is still enforced in code. Seller behavior is guided by `askPrice` and natural-language `negotiationStrategy`, not a hidden floor.
 

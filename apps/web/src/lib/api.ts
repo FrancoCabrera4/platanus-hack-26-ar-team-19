@@ -108,6 +108,10 @@ export async function getConversation(id: string) {
     mode: ConversationMode;
     status: string;
     messages: { role: string; content: string }[];
+    searchId?: string | null;
+    productId?: string | null;
+    search?: { id: string } | null;
+    product?: { id: string } | null;
   }>(`/conversations/${id}`);
 }
 

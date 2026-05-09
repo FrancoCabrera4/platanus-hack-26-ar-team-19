@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "@repo/db";
-import { generateJSON } from "../llm/gemini";
 import { log } from "@repo/logger";
+import { generateJSON } from "../llm/gemini";
 import { embedText, toVectorLiteral } from "./embeddings";
 
 export interface MatchCandidate {
@@ -17,14 +17,23 @@ interface ScoringInput {
   candidates: { id: string; title: string; description: string; category?: string | null; askPrice: number }[];
 }
 
-type ProductCandidate = {
+interface ProductCandidate {
   id: string;
   title: string;
   description: string;
   category: string | null;
   askPrice: number;
-  distance: number | null;
-};
+  distance: number;
+  similarity: number;
+}
+
+const DEFAULT_MIN_VECTOR_SIMILARITY = 0.3;
+
+function minVectorSimilarity(): number {
+  const configured = Number.parseFloat(process.env.MIN_MATCH_SIMILARITY ?? "");
+  if (!Number.isFinite(configured)) return DEFAULT_MIN_VECTOR_SIMILARITY;
+  return Math.min(Math.max(configured, 0), 1);
+}
 
 const SCORING_SCHEMA = {
   type: "object",
@@ -71,16 +80,13 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
     candidates = await findVectorCandidates(vector, ceiling, null);
   }
 
-  if (candidates.length === 0) {
-    candidates = await prisma.product.findMany({
-      where: { status: "active", askPrice: { lte: ceiling } },
-      take: 25,
-    }).then((products) => products.map((product) => ({ ...product, distance: null })));
-  }
-
   if (candidates.length === 0) return [];
   if (candidates.length === 1) {
-    return [{ productId: candidates[0]!.id, score: 0.6, rationale: "Only candidate available." }];
+    return candidates.map((candidate) => ({
+      productId: candidate.id,
+      score: candidate.similarity,
+      rationale: "Only candidate above the semantic similarity threshold.",
+    }));
   }
 
   const scoringInput: ScoringInput = {
@@ -112,16 +118,12 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
       temperature: 0.2,
     });
   } catch (err) {
-    log("Match scoring failed, falling back to price-only ranking:", (err as Error).message);
+    log("Match scoring failed, falling back to vector similarity:", (err as Error).message);
     scored = {
       matches: candidates.map((c) => ({
         productId: c.id,
-        score: c.distance == null
-          ? 1 - Math.abs(c.askPrice - search.maxPrice) / Math.max(search.maxPrice, 1)
-          : Math.max(0, 1 - c.distance),
-        rationale: c.distance == null
-          ? "Fallback price-distance score."
-          : "Fallback vector similarity score.",
+        score: c.similarity,
+        rationale: "Fallback vector similarity score.",
       })),
     };
   }
@@ -143,20 +145,35 @@ async function findVectorCandidates(
     ? Prisma.sql`AND p."category" = ${category}`
     : Prisma.empty;
 
+  const minimumSimilarity = minVectorSimilarity();
+  const maximumDistance = 1 - minimumSimilarity;
+
   return prisma.$queryRaw<ProductCandidate[]>(Prisma.sql`
+    WITH vector_candidates AS (
+      SELECT
+        p."id",
+        p."title",
+        p."description",
+        p."category",
+        p."askPrice",
+        (pe."embedding" <=> ${vector}::vector) AS "distance"
+      FROM "Product" p
+      INNER JOIN "ProductEmbedding" pe ON pe."productId" = p."id"
+      WHERE p."status" = 'active'
+        AND p."askPrice" <= ${ceiling}
+        ${categoryFilter}
+    )
     SELECT
-      p."id",
-      p."title",
-      p."description",
-      p."category",
-      p."askPrice",
-      (pe."embedding" <=> ${vector}::vector) AS "distance"
-    FROM "Product" p
-    INNER JOIN "ProductEmbedding" pe ON pe."productId" = p."id"
-    WHERE p."status" = 'active'
-      AND p."askPrice" <= ${ceiling}
-      ${categoryFilter}
-    ORDER BY pe."embedding" <=> ${vector}::vector
+      "id",
+      "title",
+      "description",
+      "category",
+      "askPrice",
+      "distance",
+      (1 - "distance") AS "similarity"
+    FROM vector_candidates
+    WHERE "distance" <= ${maximumDistance}
+    ORDER BY "distance"
     LIMIT 25
   `);
 }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   getMe,
   getConversation,
+  getNegotiation,
   getSearch,
   listConversations,
   listProducts,
@@ -15,10 +16,11 @@ import {
   uploadImage,
   type AuthUser,
   type ConversationSummary,
+  type NegotiationDetail,
   type Product,
 } from "@/lib/api";
 
-type NegStatus = "accepted" | "rejected" | "running" | "pending" | null;
+type NegStatus = "accepted" | "rejected" | "running" | "pending" | "timed_out" | "error" | null;
 
 type Tile = {
   id: string;
@@ -156,17 +158,17 @@ export default function ExplorePage() {
     try {
       const search = await getSearch(searchId);
       const newTiles: Tile[] = search.negotiations.map((neg, i) => ({
-        id: neg.listing.id,
-        title: neg.listing.title,
-        askPrice: neg.listing.askPrice,
-        imageUrl: neg.listing.imageUrl ?? undefined,
-        dealPrice: neg.finalPrice ?? undefined,
+        id: neg.product.id,
+        title: neg.product.title,
+        askPrice: neg.product.askPrice,
+        imageUrl: neg.product.imageUrl ?? undefined,
+        finalPrice: neg.finalPrice ?? undefined,
         negStatus: neg.status as NegStatus,
         negId: neg.id,
         h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
         color: TILE_COLORS[i % TILE_COLORS.length]!,
       }));
-      if (newTiles.length > 0) setTiles(newTiles);
+      if (newTiles.length > 0) setSearchTiles(newTiles);
       if (search.status !== "completed" && search.status !== "failed") {
         pollSearch(searchId, false);
       }
@@ -182,17 +184,15 @@ export default function ExplorePage() {
 
   function pollSearch(searchId: string, resetTiles = true) {
     setSearching(true);
-    setSearchTiles([]);
-    const seenNegotiations = new Set<string>();
+    if (resetTiles) setSearchTiles([]);
+    const reportedNegotiationStates = new Map<string, string>();
 
     const poll = async () => {
       try {
         const search = await getSearch(searchId);
 
-        for (const neg of search.negotiations) {
-          if (seenNegotiations.has(neg.id)) continue;
-          seenNegotiations.add(neg.id);
-
+        for (let i = 0; i < search.negotiations.length; i++) {
+          const neg = search.negotiations[i]!;
           const product = neg.product;
           const newTile: Tile = {
             id: product.id,
@@ -202,25 +202,34 @@ export default function ExplorePage() {
             finalPrice: neg.finalPrice ?? undefined,
             negStatus: neg.status as NegStatus,
             negId: neg.id,
-            h: TILE_HEIGHTS[seenNegotiations.size % TILE_HEIGHTS.length]!,
-            color: TILE_COLORS[seenNegotiations.size % TILE_COLORS.length]!,
+            h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
+            color: TILE_COLORS[i % TILE_COLORS.length]!,
           };
           setSearchTiles((prev) => {
             const existing = prev.findIndex((t) => t.id === product.id);
             if (existing >= 0) {
               const copy = [...prev];
-              copy[existing] = newTile;
+              copy[existing] = {
+                ...newTile,
+                h: copy[existing]!.h,
+                color: copy[existing]!.color,
+              };
               return copy;
             }
             return [...prev, newTile];
           });
 
-          if (neg.status === "accepted" && neg.finalPrice) {
-            setMessages((prev) => [...prev, { role: "assistant", content: `Encontré "${product.title}" y cerré la negociación a ${formatARS(neg.finalPrice!)}` }]);
-          } else if (neg.status === "rejected") {
-            setMessages((prev) => [...prev, { role: "assistant", content: `"${product.title}" — no se pudo cerrar trato, sigo buscando...` }]);
-          } else {
-            setMessages((prev) => [...prev, { role: "assistant", content: `Negociando "${product.title}"...` }]);
+          const stateKey = `${neg.status}:${neg.finalPrice ?? ""}`;
+          if (reportedNegotiationStates.get(neg.id) !== stateKey) {
+            reportedNegotiationStates.set(neg.id, stateKey);
+            if (neg.status === "accepted" && neg.finalPrice != null) {
+              const finalPrice = neg.finalPrice;
+              setMessages((prev) => [...prev, { role: "assistant", content: `Encontré "${product.title}" y cerré la negociación a ${formatARS(finalPrice)}` }]);
+            } else if (neg.status === "rejected" || neg.status === "timed_out" || neg.status === "error") {
+              setMessages((prev) => [...prev, { role: "assistant", content: `"${product.title}" — no se pudo cerrar trato, sigo buscando...` }]);
+            } else {
+              setMessages((prev) => [...prev, { role: "assistant", content: `Negociando "${product.title}"...` }]);
+            }
           }
         }
 
@@ -230,7 +239,7 @@ export default function ExplorePage() {
           const acceptedPrice = accepted?.finalPrice;
           if (acceptedPrice != null) {
             setMessages((prev) => [...prev, { role: "assistant", content: `Listo! Tu negociación cerró en ${formatARS(acceptedPrice)}.` }]);
-          } else if (seenNegotiations.size === 0) {
+          } else if (search.negotiations.length === 0) {
             setSearchStatus("");
             setMessages((prev) => [...prev, { role: "assistant", content: "No encontré productos que matcheen. Probá con otra búsqueda." }]);
             refreshProducts();
@@ -504,7 +513,7 @@ export default function ExplorePage() {
     setShowHistory(false);
     setChatCollapsed(false);
     window.history.replaceState({}, "", "/explore");
-    refreshListings();
+    refreshProducts();
   }
 
   async function toggleHistory() {
@@ -526,9 +535,10 @@ export default function ExplorePage() {
       setChatMode(conv.mode);
       setMessages(conv.messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })));
       setShowHistory(false);
-      if (conv.searchId) {
-        window.history.replaceState({}, "", `/explore?id=${conv.searchId}`);
-        loadSearchFromUrl(conv.searchId);
+      const searchId = conv.searchId ?? conv.search?.id;
+      if (searchId) {
+        window.history.replaceState({}, "", `/explore?id=${searchId}`);
+        loadSearchFromUrl(searchId);
       }
     } catch { /* ignore */ }
   }
@@ -685,8 +695,8 @@ export default function ExplorePage() {
               {item.title}
             </p>
             <div className="flex items-center gap-1.5 px-0.5 mt-0.5">
-              {item.dealPrice != null ? (
-                <span className="text-xs text-accent font-bold">{formatARS(item.dealPrice)}</span>
+              {item.finalPrice != null ? (
+                <span className="text-xs text-accent font-bold">{formatARS(item.finalPrice)}</span>
               ) : item.askPrice != null ? (
                 <span className="text-xs text-foreground/80 font-medium">{formatARS(item.askPrice)}</span>
               ) : null}
@@ -798,7 +808,7 @@ export default function ExplorePage() {
                       <polyline points="15 18 9 12 15 6" />
                     </svg>
                   </button>
-                  <p className="text-xs font-medium text-foreground truncate flex-1">{activeNeg.listing.title}</p>
+                  <p className="text-xs font-medium text-foreground truncate flex-1">{activeNeg.product.title}</p>
                   {(activeNeg.status === "running" || activeNeg.status === "pending") && (
                     <span className="flex items-center gap-1 shrink-0">
                       <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />

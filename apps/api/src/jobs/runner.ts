@@ -123,13 +123,12 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
       successful: result.successful,
       finalPrice: result.finalPrice,
     });
-    if (result.status === "accepted" && result.finalPrice != null) {
+    if (!successfulNegotiation && result.status === "accepted" && result.finalPrice !== null) {
       successfulNegotiation = {
         negotiationId: result.negotiationId,
         productId: pn.productId,
         finalPrice: result.finalPrice,
       };
-      break;
     }
   }
 

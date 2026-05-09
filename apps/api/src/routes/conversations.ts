@@ -29,6 +29,7 @@ type ConversationMessageRow = { role: string; content: string };
 type DraftState = BuyerSearchDraft | SellerProductDraft;
 
 const STATE_PREFIX = "__state__:";
+const UNCAPPED_BUYER_MAX_PRICE = 1_000_000_000;
 
 function currentUser(res: { locals: { user?: AuthUser } }): AuthUser {
   const user = res.locals.user;
@@ -63,6 +64,14 @@ function latestState<T extends DraftState>(messages: ConversationMessageRow[]): 
 
 function stateMessage(state: DraftState) {
   return { role: "system", content: `${STATE_PREFIX}${JSON.stringify(state)}` };
+}
+
+function normalizeBuyerMaxPrice(maxPrice: number | undefined): number {
+  if (typeof maxPrice === "number" && Number.isFinite(maxPrice) && maxPrice > 0) {
+    return maxPrice;
+  }
+
+  return UNCAPPED_BUYER_MAX_PRICE;
 }
 
 async function runTurn(
@@ -141,9 +150,10 @@ async function completeConversation(
   }
 
   const searchState = state as BuyerSearchDraft;
-  if (!searchState.query || !searchState.maxPrice || !searchState.negotiationStrategy) {
+  if (!searchState.query || !searchState.negotiationStrategy) {
     return {};
   }
+  const maxPrice = normalizeBuyerMaxPrice(searchState.maxPrice);
 
   const search = await prisma.buyerSearch.create({
     data: {
@@ -152,7 +162,7 @@ async function completeConversation(
       query: searchState.query,
       requirements: searchState.requirements ?? null,
       category: searchState.category ?? null,
-      maxPrice: searchState.maxPrice,
+      maxPrice,
       negotiationStrategy: searchState.negotiationStrategy,
       timeBudgetSeconds: searchState.timeBudgetSeconds ?? 120,
       status: "ready",
