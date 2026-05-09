@@ -443,7 +443,7 @@ export default function ExplorePage() {
       {/* Chat container */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4 flex items-end gap-2 transition-all duration-300 ease-out">
         {/* History button - hides when chat or history is open */}
-        <div className={`shrink-0 mb-[13px] transition-all duration-300 ease-out ${showHistory || chatOpen ? "w-0 opacity-0 overflow-hidden -mr-2" : "w-10 opacity-100"}`}>
+        <div className="shrink-0 mb-[13px]">
           <button
             type="button"
             onClick={toggleHistory}
@@ -543,7 +543,7 @@ export default function ExplorePage() {
                   <div key={i} className="animate-msg-in" style={{ animationDelay: `${i * 0.05}s` }}>
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
-                        <div className="bg-primary text-primary-foreground px-4 py-2 rounded-2xl rounded-br-md max-w-[75%]">
+                        <div className="bg-primary/20 text-amber-900 px-4 py-2 rounded-2xl rounded-br-md max-w-[75%]">
                           <p className="text-sm">{msg.content}</p>
                         </div>
                       </div>
