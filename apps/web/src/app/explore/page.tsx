@@ -22,7 +22,15 @@ import {
   type Product,
 } from "@/lib/api";
 
-type NegStatus = "accepted" | "rejected" | "running" | "pending" | "awaiting_buyer" | "timed_out" | "error" | null;
+type NegStatus =
+  | "accepted"
+  | "rejected"
+  | "running"
+  | "pending"
+  | "awaiting_buyer"
+  | "timed_out"
+  | "error"
+  | null;
 
 type Tile = {
   id: string;
@@ -37,10 +45,18 @@ type Tile = {
 };
 
 const SKELETON_TILES = [
-  { id: "s1", h: 280 }, { id: "s2", h: 340 }, { id: "s3", h: 240 },
-  { id: "s4", h: 320 }, { id: "s5", h: 360 }, { id: "s6", h: 260 },
-  { id: "s7", h: 300 }, { id: "s8", h: 220 }, { id: "s9", h: 290 },
-  { id: "s10", h: 330 }, { id: "s11", h: 250 }, { id: "s12", h: 270 },
+  { id: "s1", h: 280 },
+  { id: "s2", h: 340 },
+  { id: "s3", h: 240 },
+  { id: "s4", h: 320 },
+  { id: "s5", h: 360 },
+  { id: "s6", h: 260 },
+  { id: "s7", h: 300 },
+  { id: "s8", h: 220 },
+  { id: "s9", h: 290 },
+  { id: "s10", h: 330 },
+  { id: "s11", h: 250 },
+  { id: "s12", h: 270 },
 ];
 
 const TILE_HEIGHTS = [200, 220, 240, 260, 280, 300, 320, 340, 360];
@@ -66,10 +82,21 @@ function productsToTiles(products: Product[]): Tile[] {
 }
 
 function formatARS(n: number): string {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n);
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 0,
+  }).format(n);
 }
 
-const SELL_KEYWORDS = ["vender", "vendo", "publicar", "listar", "tengo para vender", "quiero vender"];
+const SELL_KEYWORDS = [
+  "vender",
+  "vendo",
+  "publicar",
+  "listar",
+  "tengo para vender",
+  "quiero vender",
+];
 
 type Message = {
   role: "user" | "assistant";
@@ -90,7 +117,8 @@ export default function ExplorePage() {
   const [authLoading, setAuthLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
-  const [visibleProductCount, setVisibleProductCount] = useState(PRODUCTS_PAGE_SIZE);
+  const [visibleProductCount, setVisibleProductCount] =
+    useState(PRODUCTS_PAGE_SIZE);
   const [searchTiles, setSearchTiles] = useState<Tile[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchStatus, setSearchStatus] = useState("");
@@ -116,13 +144,18 @@ export default function ExplorePage() {
   const [activeNeg, setActiveNeg] = useState<NegotiationDetail | null>(null);
   const [pendingDealNegId, setPendingDealNegId] = useState<string | null>(null);
   const [dismissedDeals, setDismissedDeals] = useState<Set<string>>(new Set());
-  const [successDeal, setSuccessDeal] = useState<{ title: string; finalPrice: number; imageUrl?: string } | null>(null);
+  const [successDeal, setSuccessDeal] = useState<{
+    title: string;
+    finalPrice: number;
+    imageUrl?: string;
+  } | null>(null);
   const chatOpen = messages.length > 0;
   const visibleProducts = useMemo(
     () => products.slice(0, visibleProductCount),
     [products, visibleProductCount],
   );
-  const browseTiles = products.length > 0 ? productsToTiles(visibleProducts) : [];
+  const browseTiles =
+    products.length > 0 ? productsToTiles(visibleProducts) : [];
   const tiles = searchTiles.length > 0 || searching ? searchTiles : browseTiles;
   const isLoadingProducts = !productsLoaded && !authLoading;
   const hasMoreProducts = visibleProductCount < products.length;
@@ -174,8 +207,10 @@ export default function ExplorePage() {
       if (search.status !== "completed" && search.status !== "failed") {
         pollSearch(searchId, false);
       }
-    } catch { /* ignore */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -194,7 +229,11 @@ export default function ExplorePage() {
       try {
         const search = await getSearch(searchId);
 
-        if (search.negotiations.length === 0 && search.status !== "completed" && search.status !== "failed") {
+        if (
+          search.negotiations.length === 0 &&
+          search.status !== "completed" &&
+          search.status !== "failed"
+        ) {
           setSearchStatus("Analizando productos compatibles...");
         }
 
@@ -230,31 +269,48 @@ export default function ExplorePage() {
           if (reportedNegotiationStates.get(neg.id) !== stateKey) {
             reportedNegotiationStates.set(neg.id, stateKey);
             if (neg.status === "accepted" && neg.finalPrice != null) {
-<<<<<<< HEAD
-              setSearchStatus(`Trato cerrado: "${product.title}" a ${formatARS(neg.finalPrice)}`);
-            } else if (neg.status === "awaiting_buyer") {
-              setSearchStatus(`Acuerdo pendiente: "${product.title}" a ${formatARS(neg.finalPrice ?? 0)}`);
-=======
+              setSearchStatus(
+                `Trato cerrado: "${product.title}" a ${formatARS(neg.finalPrice)}`,
+              );
               const finalPrice = neg.finalPrice;
-              setMessages((prev) => [...prev, { role: "assistant", content: `Encontré "${product.title}" y cerré la negociación a ${formatARS(finalPrice)}` }]);
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "assistant",
+                  content: `Encontré "${product.title}" y cerré la negociación a ${formatARS(finalPrice)}`,
+                },
+              ]);
             } else if (neg.status === "awaiting_buyer") {
-              // El modal se abre automáticamente vía useEffect que observa searchTiles.
->>>>>>> UriGandel
-            } else if (neg.status === "rejected" || neg.status === "timed_out" || neg.status === "error") {
-              setSearchStatus(`"${product.title}" — sin acuerdo, buscando más...`);
+              setSearchStatus(
+                `Acuerdo pendiente: "${product.title}" a ${formatARS(neg.finalPrice ?? 0)}`,
+              );
+            } else if (
+              neg.status === "rejected" ||
+              neg.status === "timed_out" ||
+              neg.status === "error"
+            ) {
+              setSearchStatus(
+                `"${product.title}" — sin acuerdo, buscando más...`,
+              );
             } else if (neg.status === "running") {
               setSearchStatus(`Negociando "${product.title}"...`);
             } else {
-              setSearchStatus(`Encontré "${product.title}", preparando negociación...`);
+              setSearchStatus(
+                `Encontré "${product.title}", preparando negociación...`,
+              );
             }
           }
         }
 
         if (search.status === "completed" || search.status === "failed") {
           setSearching(false);
-          const accepted = search.negotiations.find((neg) => neg.status === "accepted");
+          const accepted = search.negotiations.find(
+            (neg) => neg.status === "accepted",
+          );
           if (accepted?.finalPrice != null) {
-            setSearchStatus(`Listo! Negociación cerrada a ${formatARS(accepted.finalPrice)}`);
+            setSearchStatus(
+              `Listo! Negociación cerrada a ${formatARS(accepted.finalPrice)}`,
+            );
           } else if (search.negotiations.length === 0) {
             setSearchStatus("No encontré productos. Probá otra búsqueda.");
           } else {
@@ -274,7 +330,8 @@ export default function ExplorePage() {
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "32px";
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + "px";
+      textareaRef.current.style.height =
+        Math.min(textareaRef.current.scrollHeight, 160) + "px";
     }
   }, [input]);
 
@@ -291,8 +348,14 @@ export default function ExplorePage() {
         !dismissedDeals.has(t.negId),
     );
     return eligible.sort((a, b) => {
-      const aDrop = a.askPrice && a.finalPrice ? (a.askPrice - a.finalPrice) / a.askPrice : 0;
-      const bDrop = b.askPrice && b.finalPrice ? (b.askPrice - b.finalPrice) / b.askPrice : 0;
+      const aDrop =
+        a.askPrice && a.finalPrice
+          ? (a.askPrice - a.finalPrice) / a.askPrice
+          : 0;
+      const bDrop =
+        b.askPrice && b.finalPrice
+          ? (b.askPrice - b.finalPrice) / b.askPrice
+          : 0;
       return bDrop - aDrop;
     });
   }, [searchTiles, dismissedDeals]);
@@ -317,7 +380,9 @@ export default function ExplorePage() {
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (!entry?.isIntersecting) return;
-        setVisibleProductCount((count) => Math.min(count + PRODUCTS_PAGE_SIZE, products.length));
+        setVisibleProductCount((count) =>
+          Math.min(count + PRODUCTS_PAGE_SIZE, products.length),
+        );
       },
       { rootMargin: "200px 0px" },
     );
@@ -333,7 +398,8 @@ export default function ExplorePage() {
 
   function detectMode(text: string): ChatMode {
     const lower = text.toLowerCase();
-    if (SELL_KEYWORDS.some((kw) => lower.includes(kw))) return "posting_product";
+    if (SELL_KEYWORDS.some((kw) => lower.includes(kw)))
+      return "posting_product";
     return "buying";
   }
 
@@ -354,7 +420,11 @@ export default function ExplorePage() {
     if (!text || streaming) return;
 
     const msgImagePreview = imagePreview ?? undefined;
-    setMessages((prev) => [...prev, { role: "user", content: text, imageUrl: msgImagePreview }, { role: "assistant", content: "" }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: text, imageUrl: msgImagePreview },
+      { role: "assistant", content: "" },
+    ]);
     setInput("");
     setSuggestions([]);
     setStreaming(true);
@@ -382,7 +452,9 @@ export default function ExplorePage() {
       if (!convId) {
         mode = detectMode(text);
         setChatMode(mode);
-        const conv = await startConversation(mode === "posting_product" ? "posting_product" : "buying");
+        const conv = await startConversation(
+          mode === "posting_product" ? "posting_product" : "buying",
+        );
         convId = conv.id;
         setConversationId(conv.id);
       }
@@ -570,7 +642,9 @@ export default function ExplorePage() {
     try {
       const convs = await listConversations();
       setChatHistory(convs);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setShowHistory(true);
   }
 
@@ -579,14 +653,21 @@ export default function ExplorePage() {
       const conv = await getConversation(convId);
       setConversationId(conv.id);
       setChatMode(conv.mode);
-      setMessages(conv.messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })));
+      setMessages(
+        conv.messages.map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+      );
       setShowHistory(false);
       const searchId = conv.searchId ?? conv.search?.id;
       if (searchId) {
         window.history.replaceState({}, "", `/explore?id=${searchId}`);
         loadSearchFromUrl(searchId);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -614,7 +695,9 @@ export default function ExplorePage() {
       if (neg.status === "running" || neg.status === "pending") {
         pollNegotiation(negId);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   function pollNegotiation(negId: string) {
@@ -625,7 +708,9 @@ export default function ExplorePage() {
         if (neg.status === "running" || neg.status === "pending") {
           pollNegotiation(negId);
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }, 2000);
   }
 
@@ -655,7 +740,13 @@ export default function ExplorePage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border px-4 h-14 flex items-center justify-between">
-        <a href="/explore" onClick={(e) => { e.preventDefault(); handleNewChat(); }}>
+        <a
+          href="/explore"
+          onClick={(e) => {
+            e.preventDefault();
+            handleNewChat();
+          }}
+        >
           <img src="/logo.svg" alt="negocIA" className="h-10" />
         </a>
         <div className="relative">
@@ -670,18 +761,35 @@ export default function ExplorePage() {
           </button>
           {showUserMenu && (
             <>
-              <div className="fixed inset-0 z-20" onClick={() => setShowUserMenu(false)} />
+              <div
+                className="fixed inset-0 z-20"
+                onClick={() => setShowUserMenu(false)}
+              />
               <div className="absolute right-0 top-full mt-2 z-30 w-48 rounded-xl bg-white shadow-xl border border-black/10 py-1 animate-scale-in">
                 <div className="px-3 py-2 border-b border-black/5">
-                  <p className="text-sm font-medium text-foreground">{user?.name}</p>
-                  <p className="text-[10px] text-foreground/40">{user?.email}</p>
+                  <p className="text-sm font-medium text-foreground">
+                    {user?.name}
+                  </p>
+                  <p className="text-[10px] text-foreground/40">
+                    {user?.email}
+                  </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowUserMenu(false)}
                   className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-black/5 transition-colors flex items-center gap-2"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-foreground/50"
+                  >
                     <circle cx="12" cy="12" r="3" />
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                   </svg>
@@ -692,7 +800,17 @@ export default function ExplorePage() {
                   onClick={() => setShowUserMenu(false)}
                   className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-black/5 transition-colors flex items-center gap-2"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-foreground/50"
+                  >
                     <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                     <circle cx="8.5" cy="7" r="4" />
                     <line x1="20" y1="8" x2="20" y2="14" />
@@ -706,7 +824,17 @@ export default function ExplorePage() {
                   onClick={handleLogout}
                   className="w-full text-left px-3 py-2 text-sm text-destructive hover:bg-black/5 transition-colors flex items-center gap-2"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-destructive">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-destructive"
+                  >
                     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                     <polyline points="16 17 21 12 16 7" />
                     <line x1="21" y1="12" x2="9" y2="12" />
@@ -722,12 +850,19 @@ export default function ExplorePage() {
       {(authLoading || isLoadingProducts) && (
         <div className="relative">
           <div className="absolute inset-0 flex items-start justify-center pt-32 z-10 pointer-events-none">
-            <img src="/logo-icon.svg" alt="" className="h-12 w-12 animate-pulse" />
+            <img
+              src="/logo-icon.svg"
+              alt=""
+              className="h-12 w-12 animate-pulse"
+            />
           </div>
           <div className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28">
             {SKELETON_TILES.map((s) => (
               <div key={s.id} className="mb-3 break-inside-avoid">
-                <div className="rounded-xl bg-muted animate-pulse" style={{ height: s.h }} />
+                <div
+                  className="rounded-xl bg-muted animate-pulse"
+                  style={{ height: s.h }}
+                />
                 <div className="mt-1.5 h-3 w-3/4 rounded bg-muted animate-pulse" />
                 <div className="mt-1 h-2.5 w-1/2 rounded bg-muted animate-pulse" />
               </div>
@@ -736,7 +871,9 @@ export default function ExplorePage() {
         </div>
       )}
 
-      <div className={`p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""}`}>
+      <div
+        className={`p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""}`}
+      >
         {tiles.map((item, i) => (
           <div
             key={item.id}
@@ -758,7 +895,12 @@ export default function ExplorePage() {
               style={{ backgroundColor: item.color, height: item.h }}
             >
               {item.imageUrl ? (
-                <img src={item.imageUrl} alt={item.title} loading="lazy" className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110" />
+                <img
+                  src={item.imageUrl}
+                  alt={item.title}
+                  loading="lazy"
+                  className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110"
+                />
               ) : (
                 <div style={{ height: item.h }} />
               )}
@@ -777,7 +919,8 @@ export default function ExplorePage() {
                   Tu confirmación
                 </span>
               )}
-              {(item.negStatus === "running" || item.negStatus === "pending") && (
+              {(item.negStatus === "running" ||
+                item.negStatus === "pending") && (
                 <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
                   Negociando...
                 </span>
@@ -788,9 +931,13 @@ export default function ExplorePage() {
             </p>
             <div className="flex items-center gap-1.5 px-0.5 mt-0.5">
               {item.finalPrice != null ? (
-                <span className="text-xs text-accent font-bold">{formatARS(item.finalPrice)}</span>
+                <span className="text-xs text-accent font-bold">
+                  {formatARS(item.finalPrice)}
+                </span>
               ) : item.askPrice != null ? (
-                <span className="text-xs text-foreground/80 font-medium">{formatARS(item.askPrice)}</span>
+                <span className="text-xs text-foreground/80 font-medium">
+                  {formatARS(item.askPrice)}
+                </span>
               ) : null}
               {item.negId && (
                 <button
@@ -805,8 +952,15 @@ export default function ExplorePage() {
         ))}
         {searching && tiles.length === 0 && (
           <div className="mb-3 break-inside-avoid animate-msg-in">
-            <div className="rounded-xl bg-border animate-pulse flex items-center justify-center" style={{ height: 280 }}>
-              <img src="/logo-icon.svg" alt="" className="h-8 w-8 grayscale opacity-20 animate-thinking" />
+            <div
+              className="rounded-xl bg-border animate-pulse flex items-center justify-center"
+              style={{ height: 280 }}
+            >
+              <img
+                src="/logo-icon.svg"
+                alt=""
+                className="h-8 w-8 grayscale opacity-20 animate-thinking"
+              />
             </div>
             <div className="mt-1.5 px-0.5 h-3 w-3/4 rounded bg-border animate-pulse" />
             <div className="mt-1 px-0.5 h-2.5 w-1/2 rounded bg-border animate-pulse" />
@@ -815,8 +969,13 @@ export default function ExplorePage() {
       </div>
 
       {products.length > PRODUCTS_PAGE_SIZE && (
-        <div ref={loadMoreRef} className="px-4 pb-32 pt-2 text-center text-xs text-muted-foreground">
-          {hasMoreProducts ? `Mostrando ${visibleProducts.length} de ${products.length}` : "No hay más publicaciones"}
+        <div
+          ref={loadMoreRef}
+          className="px-4 pb-32 pt-2 text-center text-xs text-muted-foreground"
+        >
+          {hasMoreProducts
+            ? `Mostrando ${visibleProducts.length} de ${products.length}`
+            : "No hay más publicaciones"}
         </div>
       )}
 
@@ -830,7 +989,17 @@ export default function ExplorePage() {
             className="liquid-glass w-[45px] h-[45px] rounded-full flex items-center justify-center hover:scale-105 transition-transform"
             title="Historial de chats"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/60">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="text-foreground/60"
+            >
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
           </button>
@@ -846,13 +1015,25 @@ export default function ExplorePage() {
             }}
           >
             <div className="flex items-center justify-between px-4 py-2 border-b border-black/5">
-              <p className="text-xs font-medium text-foreground/70">Chats anteriores</p>
+              <p className="text-xs font-medium text-foreground/70">
+                Chats anteriores
+              </p>
               <button
                 type="button"
                 onClick={() => setShowHistory(false)}
                 className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-foreground/50"
+                >
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
@@ -860,7 +1041,9 @@ export default function ExplorePage() {
             </div>
             <div className="max-h-[40vh] overflow-y-auto">
               {chatHistory.length === 0 ? (
-                <p className="text-xs text-foreground/40 px-4 py-6 text-center">No hay chats aún</p>
+                <p className="text-xs text-foreground/40 px-4 py-6 text-center">
+                  No hay chats aún
+                </p>
               ) : (
                 chatHistory.map((c) => (
                   <button
@@ -868,11 +1051,16 @@ export default function ExplorePage() {
                     onClick={() => restoreChat(c.id)}
                     className="w-full text-left px-4 py-3 hover:bg-black/5 transition-colors border-b border-black/5 last:border-0"
                   >
-                    <p className="text-sm text-foreground line-clamp-1">{c.preview || "Chat sin mensajes"}</p>
+                    <p className="text-sm text-foreground line-clamp-1">
+                      {c.preview || "Chat sin mensajes"}
+                    </p>
                     <p className="text-[10px] text-foreground/40 mt-0.5">
                       {c.status === "completed" ? "Completado" : "En progreso"}
                       {" · "}
-                      {new Date(c.createdAt).toLocaleDateString("es-AR", { day: "numeric", month: "short" })}
+                      {new Date(c.createdAt).toLocaleDateString("es-AR", {
+                        day: "numeric",
+                        month: "short",
+                      })}
                     </p>
                   </button>
                 ))
@@ -893,44 +1081,83 @@ export default function ExplorePage() {
                 <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/20">
                   <button
                     type="button"
-                    onClick={() => { setActiveNeg(null); if (negPollRef.current) clearTimeout(negPollRef.current); }}
+                    onClick={() => {
+                      setActiveNeg(null);
+                      if (negPollRef.current) clearTimeout(negPollRef.current);
+                    }}
                     className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors shrink-0"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-foreground"
+                    >
                       <polyline points="15 18 9 12 15 6" />
                     </svg>
                   </button>
-                  <p className="text-xs font-medium text-foreground truncate flex-1">{activeNeg.product.title}</p>
-                  {(activeNeg.status === "running" || activeNeg.status === "pending") && (
+                  <p className="text-xs font-medium text-foreground truncate flex-1">
+                    {activeNeg.product.title}
+                  </p>
+                  {(activeNeg.status === "running" ||
+                    activeNeg.status === "pending") && (
                     <span className="flex items-center gap-1 shrink-0">
                       <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-                      <span className="text-[10px] text-accent font-medium">En vivo</span>
+                      <span className="text-[10px] text-accent font-medium">
+                        En vivo
+                      </span>
                     </span>
                   )}
                 </div>
                 <div className="max-h-[40vh] overflow-y-auto p-4">
                   <div className="flex items-center gap-2 mb-3">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      activeNeg.status === "accepted" ? "bg-accent text-accent-foreground" :
-                      activeNeg.status === "rejected" ? "bg-destructive text-destructive-foreground" :
-                      "bg-primary text-primary-foreground"
-                    }`}>
-                      {activeNeg.status === "accepted" ? "Aceptada" : activeNeg.status === "rejected" ? "Rechazada" : "En curso"}
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        activeNeg.status === "accepted"
+                          ? "bg-accent text-accent-foreground"
+                          : activeNeg.status === "rejected"
+                            ? "bg-destructive text-destructive-foreground"
+                            : "bg-primary text-primary-foreground"
+                      }`}
+                    >
+                      {activeNeg.status === "accepted"
+                        ? "Aceptada"
+                        : activeNeg.status === "rejected"
+                          ? "Rechazada"
+                          : "En curso"}
                     </span>
                     {activeNeg.finalPrice != null && (
-                      <span className="text-xs font-bold text-accent">{formatARS(activeNeg.finalPrice)}</span>
+                      <span className="text-xs font-bold text-accent">
+                        {formatARS(activeNeg.finalPrice)}
+                      </span>
                     )}
                   </div>
                   <div className="space-y-2">
                     {activeNeg.messages.map((msg) => (
-                      <div key={msg.id} className={`flex ${msg.side === "buyer" ? "justify-end" : "justify-start"}`}>
-                        <div className={`max-w-[80%] px-3 py-1.5 rounded-2xl ${
-                          msg.side === "buyer" ? "bg-primary/40 text-amber-950 rounded-br-md" : "bg-black/5 text-foreground rounded-bl-md"
-                        }`}>
+                      <div
+                        key={msg.id}
+                        className={`flex ${msg.side === "buyer" ? "justify-end" : "justify-start"}`}
+                      >
+                        <div
+                          className={`max-w-[80%] px-3 py-1.5 rounded-2xl ${
+                            msg.side === "buyer"
+                              ? "bg-primary/40 text-amber-950 rounded-br-md"
+                              : "bg-black/5 text-foreground rounded-bl-md"
+                          }`}
+                        >
                           <div className="flex items-center gap-1.5 mb-0.5">
-                            <span className="text-[10px] font-medium opacity-60">{msg.side === "buyer" ? "Tu agente" : "Vendedor"}</span>
+                            <span className="text-[10px] font-medium opacity-60">
+                              {msg.side === "buyer" ? "Tu agente" : "Vendedor"}
+                            </span>
                             {msg.proposedPrice != null && (
-                              <span className="text-[10px] font-bold">{formatARS(msg.proposedPrice)}</span>
+                              <span className="text-[10px] font-bold">
+                                {formatARS(msg.proposedPrice)}
+                              </span>
                             )}
                           </div>
                           <p className="text-xs">{msg.content}</p>
@@ -947,8 +1174,14 @@ export default function ExplorePage() {
           <div
             className="transition-all duration-300 ease-out overflow-hidden"
             style={{
-              maxHeight: chatOpen && !showHistory && !chatCollapsed && !activeNeg ? "50vh" : "0px",
-              opacity: chatOpen && !showHistory && !chatCollapsed && !activeNeg ? 1 : 0,
+              maxHeight:
+                chatOpen && !showHistory && !chatCollapsed && !activeNeg
+                  ? "50vh"
+                  : "0px",
+              opacity:
+                chatOpen && !showHistory && !chatCollapsed && !activeNeg
+                  ? 1
+                  : 0,
             }}
           >
             {/* Mini header */}
@@ -959,7 +1192,17 @@ export default function ExplorePage() {
                 className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors"
                 title="Colapsar"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-foreground/50"
+                >
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
               </button>
@@ -970,7 +1213,17 @@ export default function ExplorePage() {
                   className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors"
                   title="Nuevo chat"
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-foreground/50"
+                  >
                     <line x1="12" y1="5" x2="12" y2="19" />
                     <line x1="5" y1="12" x2="19" y2="12" />
                   </svg>
@@ -981,7 +1234,17 @@ export default function ExplorePage() {
                   className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors"
                   title="Cerrar"
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-foreground/50"
+                  >
                     <line x1="18" y1="6" x2="6" y2="18" />
                     <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
@@ -993,21 +1256,39 @@ export default function ExplorePage() {
             <div className="max-h-[40vh] overflow-y-auto p-5">
               <div className="space-y-4">
                 {messages.map((msg, i) => (
-                  <div key={i} className="animate-msg-in" style={{ animationDelay: `${i * 0.05}s` }}>
+                  <div
+                    key={i}
+                    className="animate-msg-in"
+                    style={{ animationDelay: `${i * 0.05}s` }}
+                  >
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
                         <div className="bg-primary/40 text-amber-950 px-4 py-2 rounded-2xl rounded-br-md max-w-[75%]">
                           {msg.imageUrl && (
-                            <button type="button" onClick={() => setLightboxSrc(msg.imageUrl!)} className="block mb-2">
-                              <img src={msg.imageUrl} alt="Imagen adjunta" className="max-h-40 rounded-xl object-cover hover:opacity-90 transition-opacity cursor-pointer" />
+                            <button
+                              type="button"
+                              onClick={() => setLightboxSrc(msg.imageUrl!)}
+                              className="block mb-2"
+                            >
+                              <img
+                                src={msg.imageUrl}
+                                alt="Imagen adjunta"
+                                className="max-h-40 rounded-xl object-cover hover:opacity-90 transition-opacity cursor-pointer"
+                              />
                             </button>
                           )}
                           <p className="text-sm">{msg.content}</p>
                         </div>
                       </div>
-                    ) : streaming && i === messages.length - 1 && !msg.content ? (
+                    ) : streaming &&
+                      i === messages.length - 1 &&
+                      !msg.content ? (
                       <div className="flex items-center gap-2 py-1">
-                        <img src="/logo-icon.svg" alt="" className="h-6 w-6 grayscale animate-thinking" />
+                        <img
+                          src="/logo-icon.svg"
+                          alt=""
+                          className="h-6 w-6 grayscale animate-thinking"
+                        />
                       </div>
                     ) : (
                       <p className="text-foreground text-sm leading-relaxed">
@@ -1046,8 +1327,16 @@ export default function ExplorePage() {
           {imagePreview && (
             <div className="px-4 pt-2 pb-1 animate-scale-in">
               <div className="relative inline-block">
-                <button type="button" onClick={() => setLightboxSrc(imagePreview)} className="block">
-                  <img src={imagePreview} alt="Preview" className="h-16 w-16 object-cover rounded-xl border border-black/10 hover:scale-105 transition-transform cursor-pointer" />
+                <button
+                  type="button"
+                  onClick={() => setLightboxSrc(imagePreview)}
+                  className="block"
+                >
+                  <img
+                    src={imagePreview}
+                    alt="Preview"
+                    className="h-16 w-16 object-cover rounded-xl border border-black/10 hover:scale-105 transition-transform cursor-pointer"
+                  />
                 </button>
                 <button
                   type="button"
@@ -1064,8 +1353,15 @@ export default function ExplorePage() {
           {searching ? (
             <div className="px-5 py-2.5">
               <div className="flex items-center gap-3 h-[28px]">
-                <img src="/logo-icon.svg" alt="" className="h-5 w-5 grayscale animate-thinking shrink-0" />
-                <p className="text-sm text-foreground/70 truncate animate-status" key={searchStatus}>
+                <img
+                  src="/logo-icon.svg"
+                  alt=""
+                  className="h-5 w-5 grayscale animate-thinking shrink-0"
+                />
+                <p
+                  className="text-sm text-foreground/70 truncate animate-status"
+                  key={searchStatus}
+                >
                   {searchStatus || "Buscando..."}
                 </p>
               </div>
@@ -1079,21 +1375,54 @@ export default function ExplorePage() {
                   className="w-full flex justify-center py-1 hover:bg-black/5 transition-colors rounded-t-3xl"
                   title="Expandir chat"
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/30">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-foreground/30"
+                  >
                     <polyline points="18 15 12 9 6 15" />
                   </svg>
                 </button>
               )}
-              <form onSubmit={handleSend} className={chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"}>
-                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
-                <div className={`flex items-end gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}>
+              <form
+                onSubmit={handleSend}
+                className={
+                  chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"
+                }
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
+                <div
+                  className={`flex items-end gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}
+                >
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center transition-colors shrink-0"
                     title="Adjuntar imagen"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/40">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-foreground/40"
+                    >
                       <line x1="12" y1="5" x2="12" y2="19" />
                       <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
@@ -1102,7 +1431,12 @@ export default function ExplorePage() {
                   {isRecording ? (
                     <>
                       <div className="flex-1 flex items-center justify-center">
-                        <canvas ref={canvasRef} width={300} height={32} className="w-full h-8" />
+                        <canvas
+                          ref={canvasRef}
+                          width={300}
+                          height={32}
+                          className="w-full h-8"
+                        />
                       </div>
                       <button
                         type="button"
@@ -1110,7 +1444,17 @@ export default function ExplorePage() {
                         className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
                         title="Cancelar"
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="text-foreground/50"
+                        >
                           <line x1="18" y1="6" x2="6" y2="18" />
                           <line x1="6" y1="6" x2="18" y2="18" />
                         </svg>
@@ -1121,7 +1465,16 @@ export default function ExplorePage() {
                         className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
                         title="Confirmar"
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
                           <polyline points="20 6 9 17 4 12" />
                         </svg>
                       </button>
@@ -1131,15 +1484,27 @@ export default function ExplorePage() {
                       <textarea
                         ref={textareaRef}
                         value={transcript || input}
-                        onChange={(e) => { setInput(e.target.value); setTranscript(""); }}
+                        onChange={(e) => {
+                          setInput(e.target.value);
+                          setTranscript("");
+                        }}
                         onKeyDown={handleKeyDown}
                         onPaste={handlePaste}
-                        placeholder={transcript || "Decile a tu agente qué querés comprar o vender..."}
+                        placeholder={
+                          transcript ||
+                          "Decile a tu agente qué querés comprar o vender..."
+                        }
                         rows={1}
                         disabled={streaming || !!transcript}
                         autoFocus
                         className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground/40 focus:outline-none resize-none disabled:opacity-50"
-                        style={{ height: "32px", maxHeight: "160px", lineHeight: "20px", paddingTop: "6px", paddingBottom: "6px" }}
+                        style={{
+                          height: "32px",
+                          maxHeight: "160px",
+                          lineHeight: "20px",
+                          paddingTop: "6px",
+                          paddingBottom: "6px",
+                        }}
                       />
                       {streaming ? (
                         <button
@@ -1148,7 +1513,12 @@ export default function ExplorePage() {
                           className="h-8 w-8 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shrink-0 hover:bg-destructive/80 transition-colors"
                           title="Detener"
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                          >
                             <rect x="6" y="6" width="12" height="12" rx="2" />
                           </svg>
                         </button>
@@ -1160,7 +1530,17 @@ export default function ExplorePage() {
                             className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
                             title="Grabar audio"
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/40">
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className="text-foreground/40"
+                            >
                               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
                               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                               <line x1="12" y1="19" x2="12" y2="23" />
@@ -1171,7 +1551,16 @@ export default function ExplorePage() {
                             type="submit"
                             className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
                           >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
                               <line x1="12" y1="19" x2="12" y2="5" />
                               <polyline points="5 12 12 5 19 12" />
                             </svg>
@@ -1180,12 +1569,11 @@ export default function ExplorePage() {
                       )}
                     </>
                   )}
-              </div>
+                </div>
               </form>
             </>
           )}
         </div>
-
       </div>
 
       {/* Confirm deal modal */}
@@ -1196,13 +1584,19 @@ export default function ExplorePage() {
           onSelect={(id) => setPendingDealNegId(id)}
           onAccept={async (acceptedId) => {
             const accepted = pendingDeals.find((d) => d.negId === acceptedId);
-            const others = pendingDeals.filter((d) => d.negId !== acceptedId).map((d) => d.negId!);
+            const others = pendingDeals
+              .filter((d) => d.negId !== acceptedId)
+              .map((d) => d.negId!);
             await acceptNegotiation(acceptedId);
-            await Promise.allSettled(others.map((oid) => rejectNegotiation(oid)));
+            await Promise.allSettled(
+              others.map((oid) => rejectNegotiation(oid)),
+            );
             setSearchTiles((prev) =>
               prev.map((t) => {
-                if (t.negId === acceptedId) return { ...t, negStatus: "accepted" as NegStatus };
-                if (t.negId && others.includes(t.negId)) return { ...t, negStatus: "rejected" as NegStatus };
+                if (t.negId === acceptedId)
+                  return { ...t, negStatus: "accepted" as NegStatus };
+                if (t.negId && others.includes(t.negId))
+                  return { ...t, negStatus: "rejected" as NegStatus };
                 return t;
               }),
             );
@@ -1220,14 +1614,19 @@ export default function ExplorePage() {
             await rejectNegotiation(rejectedId);
             setSearchTiles((prev) =>
               prev.map((t) =>
-                t.negId === rejectedId ? { ...t, negStatus: "rejected" as NegStatus } : t,
+                t.negId === rejectedId
+                  ? { ...t, negStatus: "rejected" as NegStatus }
+                  : t,
               ),
             );
             setPendingDealNegId(null); // useEffect re-elige el siguiente mejor.
             if (rejected) {
               setMessages((prev) => [
                 ...prev,
-                { role: "assistant", content: `Rechazaste el acuerdo de "${rejected.title}".` },
+                {
+                  role: "assistant",
+                  content: `Rechazaste el acuerdo de "${rejected.title}".`,
+                },
               ]);
             }
           }}
@@ -1284,10 +1683,15 @@ function ConfirmDealModal({
   onReject: (negId: string) => Promise<void>;
   onDismiss: () => void;
 }) {
-  const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
+  const [actionState, setActionState] = useState<
+    "idle" | "accepting" | "rejecting"
+  >("idle");
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const idx = Math.max(0, deals.findIndex((d) => d.negId === currentNegId));
+  const idx = Math.max(
+    0,
+    deals.findIndex((d) => d.negId === currentNegId),
+  );
   const tile = deals[idx] ?? deals[0]!;
   const total = deals.length;
   const isBest = idx === 0;
@@ -1295,10 +1699,14 @@ function ConfirmDealModal({
 
   const askPrice = tile.askPrice ?? 0;
   const finalPrice = tile.finalPrice ?? 0;
-  const dropPct = askPrice > 0 ? Math.round(((askPrice - finalPrice) / askPrice) * 100) : 0;
+  const dropPct =
+    askPrice > 0 ? Math.round(((askPrice - finalPrice) / askPrice) * 100) : 0;
   const savings = askPrice > 0 ? askPrice - finalPrice : 0;
 
-  const handle = async (kind: "accepting" | "rejecting", fn: () => Promise<void>) => {
+  const handle = async (
+    kind: "accepting" | "rejecting",
+    fn: () => Promise<void>,
+  ) => {
     setActionError(null);
     setActionState(kind);
     try {
@@ -1324,7 +1732,9 @@ function ConfirmDealModal({
   return (
     <div
       className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
-      onClick={() => { if (!busy) onDismiss(); }}
+      onClick={() => {
+        if (!busy) onDismiss();
+      }}
     >
       <div
         className="relative w-full max-w-md rounded-3xl bg-white shadow-2xl animate-scale-in overflow-hidden border border-black/5"
@@ -1337,7 +1747,17 @@ function ConfirmDealModal({
           className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full liquid-glass flex items-center justify-center hover:scale-105 transition-transform disabled:opacity-50"
           aria-label="Cerrar"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/70">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-foreground/70"
+          >
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -1345,13 +1765,25 @@ function ConfirmDealModal({
 
         <div className="relative">
           {tile.imageUrl ? (
-            <img src={tile.imageUrl} alt={tile.title} className="w-full max-h-72 object-cover" />
+            <img
+              src={tile.imageUrl}
+              alt={tile.title}
+              className="w-full max-h-72 object-cover"
+            />
           ) : (
-            <div className="w-full h-56" style={{ backgroundColor: tile.color }} />
+            <div
+              className="w-full h-56"
+              style={{ backgroundColor: tile.color }}
+            />
           )}
           {isBest && total > 1 && (
             <span className="absolute top-3 left-3 inline-flex items-center gap-1 rounded-full bg-primary/95 text-primary-foreground text-[10px] font-bold px-2.5 py-1 shadow-md">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
                 <polygon points="12 2 15 9 22 9.5 17 14.5 18.5 22 12 18 5.5 22 7 14.5 2 9.5 9 9" />
               </svg>
               Mejor acuerdo
@@ -1374,7 +1806,17 @@ function ConfirmDealModal({
                 className="w-8 h-8 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors disabled:opacity-40"
                 aria-label="Anterior acuerdo"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/60">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-foreground/60"
+                >
                   <polyline points="15 18 9 12 15 6" />
                 </svg>
               </button>
@@ -1388,7 +1830,17 @@ function ConfirmDealModal({
                 className="w-8 h-8 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors disabled:opacity-40"
                 aria-label="Siguiente acuerdo"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/60">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-foreground/60"
+                >
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
               </button>
@@ -1396,7 +1848,9 @@ function ConfirmDealModal({
           )}
 
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">Tu agente cerró un acuerdo</p>
+            <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">
+              Tu agente cerró un acuerdo
+            </p>
             <h2
               className="mt-1 text-2xl text-foreground leading-tight"
               style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}
@@ -1407,17 +1861,25 @@ function ConfirmDealModal({
 
           <div className="rounded-2xl bg-muted/60 p-4 space-y-1">
             <div className="flex items-baseline justify-between">
-              <span className="text-xs text-muted-foreground">Precio acordado</span>
+              <span className="text-xs text-muted-foreground">
+                Precio acordado
+              </span>
               <span
                 className="text-3xl text-accent"
-                style={{ fontFamily: "var(--font-heading)", fontStyle: "italic", fontWeight: 600 }}
+                style={{
+                  fontFamily: "var(--font-heading)",
+                  fontStyle: "italic",
+                  fontWeight: 600,
+                }}
               >
                 {formatARS(finalPrice)}
               </span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">Pedido original</span>
-              <span className="text-foreground/60 line-through">{formatARS(askPrice)}</span>
+              <span className="text-foreground/60 line-through">
+                {formatARS(askPrice)}
+              </span>
             </div>
             {savings > 0 && (
               <p className="pt-1 text-xs text-accent font-medium text-right">
@@ -1428,7 +1890,8 @@ function ConfirmDealModal({
 
           {total > 1 && (
             <p className="text-xs text-muted-foreground">
-              Hay {total} acuerdos pendientes. Si aceptás éste, los demás se cancelan automáticamente.
+              Hay {total} acuerdos pendientes. Si aceptás éste, los demás se
+              cancelan automáticamente.
             </p>
           )}
 
@@ -1492,7 +1955,12 @@ function SuccessDealOverlay({
         delay: Math.random() * 0.5,
         duration: 2 + Math.random() * 2,
         rotate: Math.random() * 360,
-        color: i % 3 === 0 ? "hsl(38 92% 50%)" : i % 3 === 1 ? "hsl(152 69% 40%)" : "hsl(45 93% 58%)",
+        color:
+          i % 3 === 0
+            ? "hsl(38 92% 50%)"
+            : i % 3 === 1
+              ? "hsl(152 69% 40%)"
+              : "hsl(45 93% 58%)",
         size: 6 + Math.random() * 8,
       })),
     [],
@@ -1521,11 +1989,22 @@ function SuccessDealOverlay({
       <div className="relative w-full max-w-md rounded-3xl bg-white shadow-2xl border border-black/5 overflow-hidden animate-scale-in">
         <div className="px-6 pt-8 pb-6 text-center">
           <div className="mx-auto w-20 h-20 rounded-full bg-accent text-accent-foreground flex items-center justify-center shadow-lg animate-scale-in">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="40"
+              height="40"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <polyline points="20 6 9 17 4 12" />
             </svg>
           </div>
-          <p className="mt-5 text-[11px] uppercase tracking-wider text-accent font-semibold">¡Trato cerrado!</p>
+          <p className="mt-5 text-[11px] uppercase tracking-wider text-accent font-semibold">
+            ¡Trato cerrado!
+          </p>
           <h2
             className="mt-2 text-3xl text-foreground leading-tight"
             style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}
@@ -1533,11 +2012,16 @@ function SuccessDealOverlay({
             ¡Felicitaciones!
           </h2>
           <p className="mt-3 text-sm text-muted-foreground">
-            Compraste <span className="font-medium text-foreground">{title}</span> por
+            Compraste{" "}
+            <span className="font-medium text-foreground">{title}</span> por
           </p>
           <p
             className="mt-1 text-4xl text-accent"
-            style={{ fontFamily: "var(--font-heading)", fontStyle: "italic", fontWeight: 600 }}
+            style={{
+              fontFamily: "var(--font-heading)",
+              fontStyle: "italic",
+              fontWeight: 600,
+            }}
           >
             {formatARS(finalPrice)}
           </p>
@@ -1545,7 +2029,11 @@ function SuccessDealOverlay({
 
         {imageUrl && (
           <div className="px-6 pb-4">
-            <img src={imageUrl} alt={title} className="w-full max-h-44 object-cover rounded-2xl" />
+            <img
+              src={imageUrl}
+              alt={title}
+              className="w-full max-h-44 object-cover rounded-2xl"
+            />
           </div>
         )}
 
@@ -1555,7 +2043,10 @@ function SuccessDealOverlay({
             onClick={onHome}
             className="w-full rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-md"
           >
-            Volver al inicio {countdown > 0 && <span className="opacity-70">· {countdown}s</span>}
+            Volver al inicio{" "}
+            {countdown > 0 && (
+              <span className="opacity-70">· {countdown}s</span>
+            )}
           </button>
         </div>
       </div>

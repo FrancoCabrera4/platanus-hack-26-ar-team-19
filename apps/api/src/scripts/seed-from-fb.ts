@@ -86,8 +86,16 @@ function titleKey(title: string) {
   return title.toLocaleLowerCase("es-AR").replace(/\s+/g, " ").trim();
 }
 
+const USD_TO_ARS = Number(process.env.USD_TO_ARS ?? 1200);
+const USD_THRESHOLD = 5000;
+
+function toARS(price: number): number {
+  if (price < USD_THRESHOLD) return Math.round(price * USD_TO_ARS);
+  return price;
+}
+
 function deriveProductFields(item: ScrapedProduct) {
-  const askPrice = item.price ?? 0;
+  const askPrice = toARS(item.price ?? 0);
 
   // Recover from the title/location swap in the raw scrape.
   let title = item.title;

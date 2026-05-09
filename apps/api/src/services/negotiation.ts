@@ -1,7 +1,13 @@
 import prisma from "@repo/db";
 import { log } from "@repo/logger";
-import { buyerMove, type BuyerNegotiatorContext } from "../agents/buyer-negotiator";
-import { sellerMove, type SellerNegotiatorContext } from "../agents/seller-negotiator";
+import {
+  buyerMove,
+  type BuyerNegotiatorContext,
+} from "../agents/buyer-negotiator";
+import {
+  sellerMove,
+  type SellerNegotiatorContext,
+} from "../agents/seller-negotiator";
 import type { NegotiatorMove } from "../agents/seller-negotiator";
 
 const MAX_TURNS = 8; // 4 buyer turns + 4 seller turns
@@ -26,7 +32,10 @@ interface TranscriptEntry {
  * left in `awaiting_buyer`; the buyer must explicitly confirm via POST /negotiations/:id/accept
  * to flip it to `accepted` and mark the product as sold.
  */
-export async function runNegotiation(searchId: string, productId: string): Promise<NegotiationResult> {
+export async function runNegotiation(
+  searchId: string,
+  productId: string,
+): Promise<NegotiationResult> {
   const [search, product] = await Promise.all([
     prisma.buyerSearch.findUnique({ where: { id: searchId } }),
     prisma.product.findUnique({ where: { id: productId } }),
@@ -54,7 +63,10 @@ export async function runNegotiation(searchId: string, productId: string): Promi
       });
 
   const transcript: TranscriptEntry[] = [];
-  const persistTurn = async (side: "seller" | "buyer", move: NegotiatorMove) => {
+  const persistTurn = async (
+    side: "seller" | "buyer",
+    move: NegotiatorMove,
+  ) => {
     transcript.push({ side, price: move.price ?? null, message: move.message });
     await prisma.negotiationMessage.create({
       data: {
@@ -76,7 +88,9 @@ export async function runNegotiation(searchId: string, productId: string): Promi
 
   try {
     // Re-fetch product fresh in case status changed mid-flight (e.g. sold to another buyer).
-    const liveProduct = await prisma.product.findUnique({ where: { id: productId } });
+    const liveProduct = await prisma.product.findUnique({
+      where: { id: productId },
+    });
     if (!liveProduct || liveProduct.status !== "active") {
       result = {
         negotiationId: negotiation.id,
@@ -122,7 +136,9 @@ export async function runNegotiation(searchId: string, productId: string): Promi
             break;
           }
           if (move.action === "accept") {
-            const lastSellerPrice = [...transcript].reverse().find((m) => m.side === "seller")?.price;
+            const lastSellerPrice = [...transcript]
+              .reverse()
+              .find((m) => m.side === "seller")?.price;
             if (lastSellerPrice == null) continue; // can't accept with no seller price yet
             result = {
               negotiationId: negotiation.id,
@@ -160,7 +176,9 @@ export async function runNegotiation(searchId: string, productId: string): Promi
             break;
           }
           if (move.action === "accept") {
-            const lastBuyerPrice = [...transcript].reverse().find((m) => m.side === "buyer")?.price;
+            const lastBuyerPrice = [...transcript]
+              .reverse()
+              .find((m) => m.side === "buyer")?.price;
             if (lastBuyerPrice == null) continue;
             result = {
               negotiationId: negotiation.id,
@@ -186,11 +204,7 @@ export async function runNegotiation(searchId: string, productId: string): Promi
   }
 
   // If the agents reached an agreement, run the safety checks but stop short of
-<<<<<<< HEAD
   // marking the product as sold. The human buyer still has to confirm the deal.
-=======
-  // marking the product as sold — the human buyer still has to confirm the deal.
->>>>>>> UriGandel
   if (result.status === "awaiting_buyer" && result.finalPrice != null) {
     const fresh = await prisma.product.findUnique({ where: { id: productId } });
     if (!fresh || fresh.status !== "active") {

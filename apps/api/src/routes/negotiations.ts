@@ -17,32 +17,25 @@ negotiationsRouter.get("/:id", async (req, res) => {
     },
   });
   if (!neg) return res.status(404).json({ error: "negotiation not found" });
-  if (neg.search.buyerId !== user.id) return res.status(403).json({ error: "not_the_owner" });
+  if (neg.search.buyerId !== user.id)
+    return res.status(403).json({ error: "not_the_owner" });
   return res.json(neg);
 });
 
-<<<<<<< HEAD
 // POST /negotiations/:id/accept - buyer confirms an awaiting_buyer agreement.
-=======
-// POST /negotiations/:id/accept — buyer confirms an awaiting_buyer agreement.
->>>>>>> UriGandel
 // Locks the product as sold inside a transaction so two confirmations can't both win.
 negotiationsRouter.post("/:id/accept", async (req, res) => {
   const user = res.locals.user as AuthUser;
   const neg = await prisma.negotiation.findUnique({
     where: { id: req.params.id },
     include: {
-<<<<<<< HEAD
-=======
-      product: { select: { id: true, status: true } },
->>>>>>> UriGandel
       search: { select: { buyerId: true, maxPrice: true } },
     },
   });
   if (!neg) return res.status(404).json({ error: "negotiation not found" });
-  if (neg.search.buyerId !== user.id) return res.status(403).json({ error: "not_the_owner" });
+  if (neg.search.buyerId !== user.id)
+    return res.status(403).json({ error: "not_the_owner" });
   if (neg.status !== "awaiting_buyer") {
-<<<<<<< HEAD
     return res.status(409).json({ error: "not_awaiting_buyer" });
   }
   if (neg.finalPrice == null) {
@@ -101,47 +94,6 @@ negotiationsRouter.post("/:id/accept", async (req, res) => {
 });
 
 // POST /negotiations/:id/reject - buyer declines an awaiting_buyer agreement.
-=======
-    return res.status(409).json({ error: "negotiation_not_awaiting_buyer" });
-  }
-  if (neg.finalPrice == null) {
-    return res.status(409).json({ error: "negotiation_has_no_price" });
-  }
-  if (neg.finalPrice > neg.search.maxPrice) {
-    return res.status(409).json({ error: "price_above_budget" });
-  }
-
-  try {
-    const updated = await prisma.$transaction(async (tx) => {
-      const fresh = await tx.product.findUnique({ where: { id: neg.productId } });
-      if (!fresh || fresh.status !== "active") {
-        throw new Error("product_unavailable");
-      }
-      await tx.product.update({
-        where: { id: neg.productId },
-        data: { status: "sold" },
-      });
-      return tx.negotiation.update({
-        where: { id: neg.id },
-        data: {
-          status: "accepted",
-          successful: true,
-          completedAt: new Date(),
-        },
-      });
-    });
-    return res.json(updated);
-  } catch (err) {
-    const code = (err as Error).message;
-    if (code === "product_unavailable") {
-      return res.status(409).json({ error: code });
-    }
-    throw err;
-  }
-});
-
-// POST /negotiations/:id/reject — buyer declines an awaiting_buyer agreement.
->>>>>>> UriGandel
 negotiationsRouter.post("/:id/reject", async (req, res) => {
   const user = res.locals.user as AuthUser;
   const neg = await prisma.negotiation.findUnique({
@@ -149,7 +101,8 @@ negotiationsRouter.post("/:id/reject", async (req, res) => {
     include: { search: { select: { buyerId: true } } },
   });
   if (!neg) return res.status(404).json({ error: "negotiation not found" });
-  if (neg.search.buyerId !== user.id) return res.status(403).json({ error: "not_the_owner" });
+  if (neg.search.buyerId !== user.id)
+    return res.status(403).json({ error: "not_the_owner" });
   if (neg.status !== "awaiting_buyer") {
     return res.status(409).json({ error: "negotiation_not_awaiting_buyer" });
   }

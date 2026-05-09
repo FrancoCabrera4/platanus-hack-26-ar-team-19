@@ -28,12 +28,6 @@ Your goal is to interview them efficiently and extract:
   - imageUrl: if the user provided an image URL, keep it as-is
 
 Rules:
-<<<<<<< HEAD
-  - Be EFFICIENT. If the user provides enough information in a single message to fill title, description, askPrice, and negotiationStrategy, mark done=true immediately.
-  - Only ask for information that is MISSING.
-  - Ask ONE focused question per turn when you DO need more info. Do not dump a long list of questions.
-  - Be friendly, concise, and natural. Always respond in Spanish (Argentina), using "vos" instead of "tú".
-=======
   - Be efficient. If the user provides enough information to fill title, description, askPrice, and negotiationStrategy, mark done=true immediately.
   - Treat "Current extracted state" as confirmed information the user already gave you. Do not ask again for any field that is already present there.
   - Only ask for information that is truly missing from both the latest user message and Current extracted state.
@@ -42,7 +36,6 @@ Rules:
   - Never ask the user to confirm facts you already extracted. If the required fields are complete, finish instead of asking a confirmation question.
   - Ask ONE focused question per turn when you do need more info. Do not dump a long list of questions.
   - Be friendly, concise, and natural. Match the user's language (English/Spanish).
->>>>>>> UriGandel
   - Update the state with every new fact. Never invent values; only fill in what the user told you.
   - Once you have at minimum: title, description, askPrice, negotiationStrategy, mark done=true.
   - If done=true, your reply should briefly summarize the product and confirm publication.
@@ -60,7 +53,10 @@ Rules:
 const SCHEMA = {
   type: "object",
   properties: {
-    reply: { type: "string", description: "Assistant message shown to the seller" },
+    reply: {
+      type: "string",
+      description: "Assistant message shown to the seller",
+    },
     state: {
       type: "object",
       properties: {
@@ -87,17 +83,11 @@ export async function runSellerOnboardingTurn(
   currentState: SellerProductDraft,
   extraContext?: string,
 ): Promise<SellerOnboardingTurn> {
-<<<<<<< HEAD
-  const stateNote = `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
-  const extra = extraContext ? `\n\n${extraContext}` : "";
-  return generateJSON<SellerOnboardingTurn>({
-    system: SYSTEM + "\n\n" + stateNote + extra,
-=======
   const stateNote = `Current extracted state (confirmed facts the user already provided; carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
+  const extra = extraContext ? `\n\n${extraContext}` : "";
 
   return generateJSON<SellerOnboardingTurn>({
-    system: SYSTEM + "\n\n" + stateNote,
->>>>>>> UriGandel
+    system: SYSTEM + "\n\n" + stateNote + extra,
     history,
     jsonSchema: SCHEMA,
     temperature: 0.6,
@@ -110,16 +100,16 @@ export async function streamSellerOnboardingTurn(
   onChunk: (text: string) => void,
   extraContext?: string,
 ): Promise<SellerOnboardingTurn> {
-<<<<<<< HEAD
-  const stateNote = `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
-  const extra = extraContext ? `\n\n${extraContext}` : "";
-=======
   const stateNote = `Current extracted state (confirmed facts the user already provided; carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
->>>>>>> UriGandel
-  return generateStreamJSON<SellerOnboardingTurn>({
-    system: SYSTEM + "\n\n" + stateNote + extra,
-    history,
-    jsonSchema: SCHEMA,
-    temperature: 0.6,
-  }, onChunk);
+  const extra = extraContext ? `\n\n${extraContext}` : "";
+
+  return generateStreamJSON<SellerOnboardingTurn>(
+    {
+      system: SYSTEM + "\n\n" + stateNote + extra,
+      history,
+      jsonSchema: SCHEMA,
+      temperature: 0.6,
+    },
+    onChunk,
+  );
 }

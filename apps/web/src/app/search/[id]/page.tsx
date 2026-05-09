@@ -5,10 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   acceptNegotiation,
-<<<<<<< HEAD
   ApiError,
-=======
->>>>>>> UriGandel
   getNegotiation,
   getProduct,
   getSearch,
@@ -19,21 +16,37 @@ import {
 } from "@/lib/api";
 
 function formatARS(n: number): string {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n);
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 0,
+  }).format(n);
 }
 
-const STATUS_COPY: Record<SearchDetail["status"], { label: string; cls: string }> = {
-  collecting: { label: "Recolectando preferencias", cls: "bg-amber-100 text-amber-800" },
+const STATUS_COPY: Record<
+  SearchDetail["status"],
+  { label: string; cls: string }
+> = {
+  collecting: {
+    label: "Recolectando preferencias",
+    cls: "bg-amber-100 text-amber-800",
+  },
   ready: { label: "Listo para arrancar", cls: "bg-blue-100 text-blue-800" },
   running: { label: "Negociando…", cls: "bg-blue-100 text-blue-800" },
-  completed: { label: "Búsqueda completa", cls: "bg-emerald-100 text-emerald-800" },
+  completed: {
+    label: "Búsqueda completa",
+    cls: "bg-emerald-100 text-emerald-800",
+  },
   failed: { label: "Falló", cls: "bg-rose-100 text-rose-800" },
 };
 
 const NEG_STATUS_COPY: Record<string, { label: string; cls: string }> = {
   pending: { label: "pendiente", cls: "bg-zinc-100 text-zinc-700" },
   running: { label: "negociando", cls: "bg-blue-100 text-blue-800" },
-  awaiting_buyer: { label: "esperando tu confirmación", cls: "bg-amber-100 text-amber-800" },
+  awaiting_buyer: {
+    label: "esperando tu confirmación",
+    cls: "bg-amber-100 text-amber-800",
+  },
   accepted: { label: "cerrada", cls: "bg-emerald-100 text-emerald-800" },
   rejected: { label: "rechazada", cls: "bg-rose-100 text-rose-800" },
   timed_out: { label: "sin acuerdo", cls: "bg-zinc-100 text-zinc-700" },
@@ -44,7 +57,8 @@ const ACCEPT_ERROR_COPY: Record<string, string> = {
   product_unavailable: "El producto ya no está disponible.",
   over_budget: "El precio quedó por encima de tu tope.",
   not_awaiting_buyer: "Esta negociación ya no está esperando tu confirmación.",
-  negotiation_not_awaiting_buyer: "Esta negociación ya no está esperando tu confirmación.",
+  negotiation_not_awaiting_buyer:
+    "Esta negociación ya no está esperando tu confirmación.",
   not_the_owner: "No tenés permiso para confirmar esta negociación.",
 };
 
@@ -55,30 +69,19 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const stoppedRef = useRef(false);
 
-<<<<<<< HEAD
   const refetch = useCallback(async () => {
-=======
-  const refresh = async () => {
->>>>>>> UriGandel
     try {
       const s = await getSearch(searchId);
       setSearch(s);
       if (s.status === "completed" || s.status === "failed") {
         stoppedRef.current = true;
       }
-<<<<<<< HEAD
       return s;
     } catch (e) {
       setError((e as Error).message);
       return null;
     }
   }, [searchId]);
-=======
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
->>>>>>> UriGandel
 
   useEffect(() => {
     let cancelled = false;
@@ -129,7 +132,8 @@ export default function SearchPage() {
   }
 
   const statusInfo = STATUS_COPY[search.status] ?? STATUS_COPY.collecting;
-  const acceptedNegotiation = search.negotiations.find((n) => n.status === "accepted") ?? null;
+  const acceptedNegotiation =
+    search.negotiations.find((n) => n.status === "accepted") ?? null;
 
   return (
     <Shell>
@@ -137,14 +141,31 @@ export default function SearchPage() {
         <header className="rounded-2xl bg-white border border-black/5 p-5 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Búsqueda activa</p>
-              <h1 className="mt-1 text-2xl font-medium tracking-tight">{search.query}</h1>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                Búsqueda activa
+              </p>
+              <h1 className="mt-1 text-2xl font-medium tracking-tight">
+                {search.query}
+              </h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                Tope <span className="font-medium text-foreground">{formatARS(search.maxPrice)}</span>
-                {search.category ? <> · categoría <span className="font-medium text-foreground">{search.category}</span></> : null}
+                Tope{" "}
+                <span className="font-medium text-foreground">
+                  {formatARS(search.maxPrice)}
+                </span>
+                {search.category ? (
+                  <>
+                    {" "}
+                    · categoría{" "}
+                    <span className="font-medium text-foreground">
+                      {search.category}
+                    </span>
+                  </>
+                ) : null}
               </p>
             </div>
-            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${statusInfo.cls}`}>
+            <span
+              className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${statusInfo.cls}`}
+            >
               {(search.status === "running" || search.status === "ready") && (
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
               )}
@@ -153,12 +174,18 @@ export default function SearchPage() {
           </div>
         </header>
 
-        {acceptedNegotiation && <OutcomeCard negotiation={acceptedNegotiation} />}
+        {acceptedNegotiation && (
+          <OutcomeCard negotiation={acceptedNegotiation} />
+        )}
 
         <section>
           <h2 className="mb-3 text-sm font-medium tracking-wide text-muted-foreground">
             Negociaciones
-            {search.negotiations.length > 0 && <span className="ml-2 text-foreground">({search.negotiations.length})</span>}
+            {search.negotiations.length > 0 && (
+              <span className="ml-2 text-foreground">
+                ({search.negotiations.length})
+              </span>
+            )}
           </h2>
           {search.negotiations.length === 0 ? (
             search.status === "running" || search.status === "ready" ? (
@@ -167,7 +194,9 @@ export default function SearchPage() {
                 <SkeletonCard />
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No se encontraron productos que coincidan con tu búsqueda.</p>
+              <p className="text-sm text-muted-foreground">
+                No se encontraron productos que coincidan con tu búsqueda.
+              </p>
             )
           ) : (
             <div className="space-y-3">
@@ -176,13 +205,7 @@ export default function SearchPage() {
                   key={n.id}
                   summary={n}
                   maxPrice={search.maxPrice}
-<<<<<<< HEAD
-                  onAfterAction={() => {
-                    void refetch();
-                  }}
-=======
-                  onAfterAction={refresh}
->>>>>>> UriGandel
+                  onAfterAction={refetch}
                 />
               ))}
             </div>
@@ -190,7 +213,10 @@ export default function SearchPage() {
         </section>
 
         <footer className="pt-2 text-center">
-          <Link href="/explore" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+          <Link
+            href="/explore"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
             ← Volver a explorar
           </Link>
         </footer>
@@ -230,12 +256,25 @@ function SkeletonCard() {
   );
 }
 
-function OutcomeCard({ negotiation }: { negotiation: SearchDetail["negotiations"][number] }) {
+function OutcomeCard({
+  negotiation,
+}: {
+  negotiation: SearchDetail["negotiations"][number];
+}) {
   return (
     <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-5">
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <polyline points="20 6 9 17 4 12" />
           </svg>
         </div>
@@ -257,72 +296,51 @@ function NegotiationCard({
 }: {
   summary: SearchDetail["negotiations"][number];
   maxPrice: number;
-<<<<<<< HEAD
-  onAfterAction: () => void;
-=======
-  onAfterAction: () => Promise<void>;
->>>>>>> UriGandel
+  onAfterAction: () => Promise<unknown> | unknown;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"product" | "chat">("product");
   const [detail, setDetail] = useState<NegotiationDetail | null>(null);
   const [loading, setLoading] = useState(false);
-<<<<<<< HEAD
   const [product, setProduct] = useState<Product | null>(null);
   const [productLoading, setProductLoading] = useState(false);
-  const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
+  const [actionState, setActionState] = useState<
+    "idle" | "accepting" | "rejecting"
+  >("idle");
   const [actionError, setActionError] = useState<string | null>(null);
   const status = NEG_STATUS_COPY[summary.status] ?? NEG_STATUS_COPY.pending;
-  const canAccept = summary.status === "awaiting_buyer" && summary.finalPrice != null;
+  const canAccept =
+    summary.status === "awaiting_buyer" && summary.finalPrice != null;
 
   const handleAccept = async () => {
     if (!canAccept || actionState !== "idle") return;
-=======
-  const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
-  const [actionError, setActionError] = useState<string | null>(null);
-  const status = NEG_STATUS_COPY[summary.status] ?? NEG_STATUS_COPY.pending;
-  const awaitingBuyer = summary.status === "awaiting_buyer";
-
-  const handleAccept = async () => {
->>>>>>> UriGandel
     setActionError(null);
     setActionState("accepting");
     try {
       await acceptNegotiation(summary.id);
-<<<<<<< HEAD
-      onAfterAction();
+      await onAfterAction();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "error";
-      setActionError(ACCEPT_ERROR_COPY[code] ?? "No se pudo confirmar la negociación.");
-=======
-      await onAfterAction();
-    } catch (e) {
-      setActionError((e as Error).message);
->>>>>>> UriGandel
+      setActionError(
+        ACCEPT_ERROR_COPY[code] ?? "No se pudo confirmar la negociación.",
+      );
     } finally {
       setActionState("idle");
     }
   };
 
   const handleReject = async () => {
-<<<<<<< HEAD
     if (!canAccept || actionState !== "idle") return;
-=======
->>>>>>> UriGandel
     setActionError(null);
     setActionState("rejecting");
     try {
       await rejectNegotiation(summary.id);
-<<<<<<< HEAD
-      onAfterAction();
+      await onAfterAction();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "error";
-      setActionError(ACCEPT_ERROR_COPY[code] ?? "No se pudo rechazar la negociación.");
-=======
-      await onAfterAction();
-    } catch (e) {
-      setActionError((e as Error).message);
->>>>>>> UriGandel
+      setActionError(
+        ACCEPT_ERROR_COPY[code] ?? "No se pudo rechazar la negociación.",
+      );
     } finally {
       setActionState("idle");
     }
@@ -345,7 +363,8 @@ function NegotiationCard({
     }
     void load();
     const interval = setInterval(() => {
-      if (summary.status === "running" || summary.status === "pending") void load();
+      if (summary.status === "running" || summary.status === "pending")
+        void load();
     }, 1500);
     return () => {
       cancelled = true;
@@ -375,7 +394,11 @@ function NegotiationCard({
 
   const dropPct =
     summary.finalPrice && summary.product.askPrice > 0
-      ? Math.round(((summary.product.askPrice - summary.finalPrice) / summary.product.askPrice) * 100)
+      ? Math.round(
+          ((summary.product.askPrice - summary.finalPrice) /
+            summary.product.askPrice) *
+            100,
+        )
       : null;
 
   return (
@@ -387,13 +410,20 @@ function NegotiationCard({
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium truncate">{summary.product.title}</p>
+            <p className="text-sm font-medium truncate">
+              {summary.product.title}
+            </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Pedido: {formatARS(summary.product.askPrice)}
               {summary.finalPrice != null && (
                 <>
-                  {" "}· {summary.status === "awaiting_buyer" ? "Acordado" : "Cerrado"}:{" "}
-                  <span className="font-medium text-foreground">{formatARS(summary.finalPrice)}</span>
+                  {" "}
+                  ·{" "}
+                  {summary.status === "awaiting_buyer" ? "Acordado" : "Cerrado"}
+                  :{" "}
+                  <span className="font-medium text-foreground">
+                    {formatARS(summary.finalPrice)}
+                  </span>
                   {dropPct != null && dropPct > 0 && (
                     <span className="ml-1 text-emerald-700">(-{dropPct}%)</span>
                   )}
@@ -401,23 +431,23 @@ function NegotiationCard({
               )}
             </p>
           </div>
-          <span className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>
+          <span
+            className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}
+          >
             {status.label}
           </span>
         </div>
       </button>
 
-<<<<<<< HEAD
       {canAccept && summary.finalPrice != null && (
-=======
-      {awaitingBuyer && summary.finalPrice != null && (
->>>>>>> UriGandel
         <div className="border-t border-amber-200 bg-amber-50/70 px-4 py-3">
           <p className="text-sm text-amber-900">
-            Los agentes acordaron <span className="font-semibold">{formatARS(summary.finalPrice)}</span>{" "}
-            para <span className="font-medium">{summary.product.title}</span>. ¿Querés cerrar el trato?
-<<<<<<< HEAD
-=======
+            Los agentes acordaron{" "}
+            <span className="font-semibold">
+              {formatARS(summary.finalPrice)}
+            </span>{" "}
+            para <span className="font-medium">{summary.product.title}</span>.
+            ¿Querés cerrar el trato?
           </p>
           <div className="mt-3 flex gap-2">
             <button
@@ -438,75 +468,9 @@ function NegotiationCard({
             </button>
           </div>
           {actionError && (
-            <p className="mt-2 text-xs text-rose-700">No pudimos guardar tu respuesta: {actionError}</p>
-          )}
-        </div>
-      )}
-
-      {open && (
-        <div className="border-t border-black/5 bg-zinc-50/50 px-4 py-3">
-          {loading && !detail ? (
-            <div className="space-y-2">
-              <div className="h-3 w-2/3 rounded bg-zinc-200 animate-pulse" />
-              <div className="h-3 w-1/2 rounded bg-zinc-100 animate-pulse" />
-            </div>
-          ) : detail && detail.messages.length > 0 ? (
-            <div className="space-y-3">
-              {detail.messages.map((m) => (
-                <div key={m.id} className={`flex ${m.side === "buyer" ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={`max-w-[78%] rounded-2xl px-3 py-2 ${
-                      m.side === "buyer"
-                        ? "bg-foreground text-background rounded-br-md"
-                        : "bg-white border border-black/10 rounded-bl-md"
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide opacity-70">
-                      <span>{m.side === "buyer" ? "comprador" : "vendedor"}</span>
-                      <span>·</span>
-                      <span>{m.action}</span>
-                      {m.proposedPrice != null && (
-                        <>
-                          <span>·</span>
-                          <span className="font-medium">{formatARS(m.proposedPrice)}</span>
-                        </>
-                      )}
-                    </div>
-                    <p className="mt-0.5 text-sm leading-snug">{m.content}</p>
-                  </div>
-                </div>
-              ))}
-              {detail.reason && (
-                <p className="pt-1 text-xs italic text-muted-foreground">Motivo: {detail.reason}</p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Esperando primer turno…</p>
-          )}
-          <p className="mt-3 text-[10px] text-muted-foreground">
-            Tope del comprador: {formatARS(maxPrice)} (privado para el vendedor)
->>>>>>> UriGandel
-          </p>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={handleAccept}
-              disabled={actionState !== "idle"}
-              className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:opacity-60"
-            >
-              {actionState === "accepting" ? "Cerrando…" : "Aceptar"}
-            </button>
-            <button
-              type="button"
-              onClick={handleReject}
-              disabled={actionState !== "idle"}
-              className="inline-flex items-center justify-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60"
-            >
-              {actionState === "rejecting" ? "Rechazando…" : "No aceptar"}
-            </button>
-          </div>
-          {actionError && (
-            <p className="mt-2 text-xs text-rose-700">No pudimos guardar tu respuesta: {actionError}</p>
+            <p className="mt-2 text-xs text-rose-700">
+              No pudimos guardar tu respuesta: {actionError}
+            </p>
           )}
         </div>
       )}
@@ -514,7 +478,10 @@ function NegotiationCard({
       {open && (
         <div className="border-t border-black/5 bg-zinc-50/50">
           <div className="flex items-center gap-1 px-2 pt-2">
-            <TabButton active={tab === "product"} onClick={() => setTab("product")}>
+            <TabButton
+              active={tab === "product"}
+              onClick={() => setTab("product")}
+            >
               Producto
             </TabButton>
             <TabButton active={tab === "chat"} onClick={() => setTab("chat")}>
@@ -544,7 +511,10 @@ function NegotiationCard({
             ) : detail && detail.messages.length > 0 ? (
               <div className="space-y-3">
                 {detail.messages.map((m) => (
-                  <div key={m.id} className={`flex ${m.side === "buyer" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    key={m.id}
+                    className={`flex ${m.side === "buyer" ? "justify-end" : "justify-start"}`}
+                  >
                     <div
                       className={`max-w-[78%] rounded-2xl px-3 py-2 ${
                         m.side === "buyer"
@@ -553,13 +523,17 @@ function NegotiationCard({
                       }`}
                     >
                       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide opacity-70">
-                        <span>{m.side === "buyer" ? "comprador" : "vendedor"}</span>
+                        <span>
+                          {m.side === "buyer" ? "comprador" : "vendedor"}
+                        </span>
                         <span>·</span>
                         <span>{m.action}</span>
                         {m.proposedPrice != null && (
                           <>
                             <span>·</span>
-                            <span className="font-medium">{formatARS(m.proposedPrice)}</span>
+                            <span className="font-medium">
+                              {formatARS(m.proposedPrice)}
+                            </span>
                           </>
                         )}
                       </div>
@@ -568,14 +542,19 @@ function NegotiationCard({
                   </div>
                 ))}
                 {detail.reason && (
-                  <p className="pt-1 text-xs italic text-muted-foreground">Motivo: {detail.reason}</p>
+                  <p className="pt-1 text-xs italic text-muted-foreground">
+                    Motivo: {detail.reason}
+                  </p>
                 )}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">Esperando primer turno…</p>
+              <p className="text-xs text-muted-foreground">
+                Esperando primer turno…
+              </p>
             )}
             <p className="mt-3 text-[10px] text-muted-foreground">
-              Tope del comprador: {formatARS(maxPrice)} (privado para el vendedor)
+              Tope del comprador: {formatARS(maxPrice)} (privado para el
+              vendedor)
             </p>
           </div>
         </div>
@@ -643,7 +622,11 @@ function ProductPanel({
       <div className="aspect-video w-full overflow-hidden rounded-lg bg-zinc-100">
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={imageUrl} alt={title} className="h-full w-full object-cover" />
+          <img
+            src={imageUrl}
+            alt={title}
+            className="h-full w-full object-cover"
+          />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
             Sin imagen
@@ -676,7 +659,9 @@ function ProductPanel({
           <div className="h-3 w-2/3 rounded bg-zinc-100 animate-pulse" />
         </div>
       ) : description ? (
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{description}</p>
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">
+          {description}
+        </p>
       ) : null}
 
       <div className="rounded-lg bg-white border border-black/5 p-3 text-sm">
@@ -687,7 +672,9 @@ function ProductPanel({
         {finalPrice != null && (
           <div className="mt-1 flex items-center justify-between">
             <span className="text-muted-foreground">Precio negociado</span>
-            <span className="font-medium text-emerald-700">{formatARS(finalPrice)}</span>
+            <span className="font-medium text-emerald-700">
+              {formatARS(finalPrice)}
+            </span>
           </div>
         )}
       </div>
