@@ -143,7 +143,7 @@ export async function runNegotiation(
             result = {
               negotiationId: negotiation.id,
               status: "awaiting_buyer",
-              finalPrice: lastSellerPrice,
+              finalPrice: Math.min(lastSellerPrice, liveProduct.askPrice),
               successful: false,
               reason: move.message,
             };
@@ -183,7 +183,7 @@ export async function runNegotiation(
             result = {
               negotiationId: negotiation.id,
               status: "awaiting_buyer",
-              finalPrice: lastBuyerPrice,
+              finalPrice: Math.min(lastBuyerPrice, liveProduct.askPrice),
               successful: false,
               reason: move.message,
             };
@@ -214,6 +214,14 @@ export async function runNegotiation(
         finalPrice: null,
         successful: false,
         reason: "Product was sold or withdrawn during negotiation.",
+      };
+    } else if (result.finalPrice > fresh.askPrice) {
+      result = {
+        negotiationId: negotiation.id,
+        status: "rejected",
+        finalPrice: null,
+        successful: false,
+        reason: "Final price above original ask price (safety check).",
       };
     } else if (result.finalPrice > search.maxPrice) {
       result = {

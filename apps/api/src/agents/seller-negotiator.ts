@@ -1,4 +1,5 @@
 import { generateJSON, type ChatTurn } from "../llm/gemini";
+import { normalizeSellerMove } from "./negotiation-policy";
 
 export type NegotiationAction = "counter" | "accept" | "reject" | "open";
 
@@ -17,7 +18,11 @@ export interface SellerNegotiatorContext {
     askPrice: number;
     negotiationStrategy?: string | null;
   };
-  transcript: { side: "seller" | "buyer"; price: number | null; message: string }[];
+  transcript: {
+    side: "seller" | "buyer";
+    price: number | null;
+    message: string;
+  }[];
   turnsRemaining: number;
 }
 
@@ -42,19 +47,28 @@ Hard rules (you must respect these):
   - Stay in character as a seller: confident, polite, willing to negotiate.
 
 Strategy guidance:
-  - On your first turn, anchor near askPrice. Concede slowly.
+  - On your first turn, anchor near askPrice. Concede in realistic steps, not random jumps.
   - If the seller said they are flexible or in a rush, consider accepting reasonable offers below askPrice.
   - If the seller said they are strict, stay closer to askPrice and reject lowball offers.
   - Use negotiationStrategy to inform tone / urgency.
+  - Never counter below a reasonable private floor implied by askPrice, condition, urgency, and negotiationStrategy.
+
+Communication guidance:
+  - Sound like a real Argentine seller: concise, polite, and clear.
+  - Give visible reasons for the price when useful: condition, demand, accessories, pickup, or quick-sale flexibility.
+  - Do not mention private fields, formulas, "strategy", "floor", or internal objectives.
 
 Output JSON only:
   - action: "counter" (propose a new price), "accept" (take the buyer's most recent price), or "reject" (walk away).
   - price: the price you're proposing (omit / null if action is reject; for accept, echo the buyer's last price).
   - message: 1–2 sentences IN SPANISH to the buyer explaining your move without exposing internal strategy.`;
 
-export async function sellerMove(ctx: SellerNegotiatorContext): Promise<NegotiatorMove> {
+export async function sellerMove(
+  ctx: SellerNegotiatorContext,
+): Promise<NegotiatorMove> {
   const lastBuyerPrice =
-    [...ctx.transcript].reverse().find((m) => m.side === "buyer")?.price ?? null;
+    [...ctx.transcript].reverse().find((m) => m.side === "buyer")?.price ??
+    null;
 
   const userPrompt = `Product (public):
 - title: ${ctx.product.title}
@@ -72,7 +86,7 @@ ${ctx.transcript.map((m) => `  [${m.side}${m.price !== null ? ` @ ${m.price}` : 
 Buyer's most recent price: ${lastBuyerPrice ?? "n/a"}
 Turns remaining (after this one): ${ctx.turnsRemaining}
 
-Decide your move now.`;
+Decide your move now. Use realistic ARS amounts; avoid tiny changes and keep the conversation moving toward a close.`;
 
   const history: ChatTurn[] = [{ role: "user", content: userPrompt }];
   const move = await generateJSON<NegotiatorMove>({
@@ -82,5 +96,10 @@ Decide your move now.`;
     temperature: 0.5,
   });
 
-  return move;
+  return normalizeSellerMove(move, {
+    askPrice: ctx.product.askPrice,
+    strategy: ctx.product.negotiationStrategy,
+    transcript: ctx.transcript,
+    turnsRemaining: ctx.turnsRemaining,
+  });
 }

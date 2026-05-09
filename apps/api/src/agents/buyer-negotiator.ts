@@ -1,4 +1,5 @@
 import { generateJSON, type ChatTurn } from "../llm/gemini";
+import { normalizeBuyerMove } from "./negotiation-policy";
 import type { NegotiatorMove } from "./seller-negotiator";
 
 export interface BuyerNegotiatorContext {
@@ -15,7 +16,11 @@ export interface BuyerNegotiatorContext {
     maxPrice: number;
     negotiationStrategy?: string | null;
   };
-  transcript: { side: "seller" | "buyer"; price: number | null; message: string }[];
+  transcript: {
+    side: "seller" | "buyer";
+    price: number | null;
+    message: string;
+  }[];
   turnsRemaining: number;
 }
 
@@ -40,19 +45,28 @@ Hard rules (you must respect these):
   - Stay in character as a buyer: interested but cost-conscious, polite.
 
 Strategy guidance:
-  - On your opening turn (action="open"), anchor low — start clearly below askPrice but high enough to stay credible.
-  - On counters, increase only when needed to keep the seller engaged.
+  - On your opening turn (action="open"), anchor below askPrice but avoid insulting lowballs.
+  - On counters, improve gradually, never bid against yourself, and keep the number below the seller's latest price.
   - If the seller's offer is at or below your maxPrice and turnsRemaining is low, consider accepting.
+  - Accept early only when the seller's price is clearly strong for your objective.
   - If the seller won't go below your maxPrice and turns are running out, reject.
+
+Communication guidance:
+  - Sound like a real Argentine buyer: concise, warm, and specific about the visible reason for your move.
+  - Mention practical public factors when useful: condition, pickup timing, included accessories, or market alternatives.
+  - Do not mention private fields, formulas, "strategy", "ceiling", or internal objectives.
 
 Output JSON only:
   - action: "open" (your very first turn), "counter", "accept" (take the seller's most recent price), or "reject".
   - price: the price you're proposing (omit / null if action is reject; for accept, echo the seller's last price).
   - message: 1–2 sentences IN SPANISH to the seller explaining your move (no internal numbers like maxPrice).`;
 
-export async function buyerMove(ctx: BuyerNegotiatorContext): Promise<NegotiatorMove> {
+export async function buyerMove(
+  ctx: BuyerNegotiatorContext,
+): Promise<NegotiatorMove> {
   const lastSellerPrice =
-    [...ctx.transcript].reverse().find((m) => m.side === "seller")?.price ?? null;
+    [...ctx.transcript].reverse().find((m) => m.side === "seller")?.price ??
+    null;
   const isOpening = ctx.transcript.length === 0;
 
   const userPrompt = `Product (public):
@@ -75,7 +89,7 @@ Seller's most recent price: ${lastSellerPrice ?? "n/a"}
 Turns remaining (after this one): ${ctx.turnsRemaining}
 Is this your opening turn? ${isOpening ? "yes — use action=open" : "no"}
 
-Decide your move now.`;
+Decide your move now. Use realistic ARS amounts; avoid tiny changes and avoid jumps that reveal your budget.`;
 
   const history: ChatTurn[] = [{ role: "user", content: userPrompt }];
   const move = await generateJSON<NegotiatorMove>({
@@ -85,19 +99,11 @@ Decide your move now.`;
     temperature: 0.5,
   });
 
-  // Safety: enforce hard ceiling.
-  if (move.action === "accept" && lastSellerPrice !== null && lastSellerPrice > ctx.search.maxPrice) {
-    return {
-      action: "counter",
-      price: ctx.search.maxPrice,
-      message: "Se me va un poco del presupuesto. ¿Podrías acercarte a este precio?",
-    };
-  }
-  if (move.action === "counter" && typeof move.price === "number" && move.price > ctx.search.maxPrice) {
-    move.price = ctx.search.maxPrice;
-  }
-  if (isOpening && move.action !== "open") {
-    move.action = "open";
-  }
-  return move;
+  return normalizeBuyerMove(move, {
+    askPrice: ctx.product.askPrice,
+    maxPrice: ctx.search.maxPrice,
+    strategy: ctx.search.negotiationStrategy,
+    transcript: ctx.transcript,
+    turnsRemaining: ctx.turnsRemaining,
+  });
 }

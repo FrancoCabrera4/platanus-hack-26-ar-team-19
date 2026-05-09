@@ -1,0 +1,2 @@
+ALTER TABLE "BuyerSearch" ADD COLUMN IF NOT EXISTS "imageUrl" TEXT;
+ALTER TABLE "BuyerSearch" ADD COLUMN IF NOT EXISTS "imageDescription" TEXT;

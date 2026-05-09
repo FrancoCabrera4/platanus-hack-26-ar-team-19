@@ -56,7 +56,8 @@ negotiationsRouter.post("/:id/accept", async (req, res) => {
       });
       return { ok: false as const, code: "product_unavailable" };
     }
-    if (neg.finalPrice! > neg.search.maxPrice) {
+    const finalPrice = Math.min(neg.finalPrice!, fresh.askPrice);
+    if (finalPrice > neg.search.maxPrice) {
       await tx.negotiation.update({
         where: { id: neg.id },
         data: {
@@ -77,6 +78,7 @@ negotiationsRouter.post("/:id/accept", async (req, res) => {
       data: {
         status: "accepted",
         successful: true,
+        finalPrice,
         completedAt: new Date(),
       },
       include: {
