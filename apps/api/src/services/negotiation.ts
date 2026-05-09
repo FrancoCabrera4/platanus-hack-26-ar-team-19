@@ -11,7 +11,7 @@ export interface NegotiationResult {
   status: "accepted" | "rejected" | "timed_out" | "error";
   finalPrice: number | null;
   reason?: string;
-  dealId?: string;
+  successful: boolean;
 }
 
 interface TranscriptEntry {
@@ -21,19 +21,19 @@ interface TranscriptEntry {
 }
 
 /**
- * Run a full negotiation between buyer and seller agents for a (search, listing) pair.
- * Persists all messages to the DB. Creates a Deal on accept.
+ * Run a full negotiation between buyer and seller agents for a (search, product) pair.
+ * Persists all messages to the DB. An accepted Negotiation is the deal record.
  */
-export async function runNegotiation(searchId: string, listingId: string): Promise<NegotiationResult> {
-  const [search, listing] = await Promise.all([
+export async function runNegotiation(searchId: string, productId: string): Promise<NegotiationResult> {
+  const [search, product] = await Promise.all([
     prisma.buyerSearch.findUnique({ where: { id: searchId } }),
-    prisma.listing.findUnique({ where: { id: listingId } }),
+    prisma.product.findUnique({ where: { id: productId } }),
   ]);
   if (!search) throw new Error(`Search ${searchId} not found`);
-  if (!listing) throw new Error(`Listing ${listingId} not found`);
+  if (!product) throw new Error(`Product ${productId} not found`);
 
   const existing = await prisma.negotiation.findFirst({
-    where: { searchId, listingId, status: "pending" },
+    where: { searchId, productId, status: "pending" },
   });
   const negotiation = existing
     ? await prisma.negotiation.update({
@@ -41,7 +41,14 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
         data: { status: "running", startedAt: new Date() },
       })
     : await prisma.negotiation.create({
-        data: { searchId, listingId, status: "running", startedAt: new Date() },
+        data: {
+          searchId,
+          productId,
+          buyerId: search.buyerId,
+          sellerId: product.userId,
+          status: "running",
+          startedAt: new Date(),
+        },
       });
 
   const transcript: TranscriptEntry[] = [];
@@ -62,17 +69,19 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
     negotiationId: negotiation.id,
     status: "timed_out",
     finalPrice: null,
+    successful: false,
   };
 
   try {
-    // Re-fetch listing fresh in case status changed mid-flight (e.g. sold to another buyer).
-    const liveListing = await prisma.listing.findUnique({ where: { id: listingId } });
-    if (!liveListing || liveListing.status !== "active") {
+    // Re-fetch product fresh in case status changed mid-flight (e.g. sold to another buyer).
+    const liveProduct = await prisma.product.findUnique({ where: { id: productId } });
+    if (!liveProduct || liveProduct.status !== "active") {
       result = {
         negotiationId: negotiation.id,
         status: "rejected",
         finalPrice: null,
-        reason: "Listing no longer available.",
+        successful: false,
+        reason: "Product no longer available.",
       };
     } else {
       for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -81,18 +90,18 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
 
         if (isBuyerTurn) {
           const ctx: BuyerNegotiatorContext = {
-            listing: {
-              title: liveListing.title,
-              description: liveListing.description,
-              category: liveListing.category,
-              condition: liveListing.condition,
-              askPrice: liveListing.askPrice,
+            product: {
+              title: liveProduct.title,
+              description: liveProduct.description,
+              category: liveProduct.category,
+              condition: liveProduct.condition,
+              askPrice: liveProduct.askPrice,
             },
             search: {
               query: search.query,
               requirements: search.requirements,
               maxPrice: search.maxPrice,
-              minPrice: search.minPrice,
+              negotiationStrategy: search.negotiationStrategy,
             },
             transcript,
             turnsRemaining,
@@ -105,6 +114,7 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
               negotiationId: negotiation.id,
               status: "rejected",
               finalPrice: null,
+              successful: false,
               reason: `Buyer walked away: ${move.message}`,
             };
             break;
@@ -116,20 +126,20 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
               negotiationId: negotiation.id,
               status: "accepted",
               finalPrice: lastSellerPrice,
+              successful: true,
               reason: move.message,
             };
             break;
           }
         } else {
           const ctx: SellerNegotiatorContext = {
-            listing: {
-              title: liveListing.title,
-              description: liveListing.description,
-              category: liveListing.category,
-              condition: liveListing.condition,
-              askPrice: liveListing.askPrice,
-              minPrice: liveListing.minPrice,
-              strategyNotes: liveListing.strategyNotes,
+            product: {
+              title: liveProduct.title,
+              description: liveProduct.description,
+              category: liveProduct.category,
+              condition: liveProduct.condition,
+              askPrice: liveProduct.askPrice,
+              negotiationStrategy: liveProduct.negotiationStrategy,
             },
             transcript,
             turnsRemaining,
@@ -142,6 +152,7 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
               negotiationId: negotiation.id,
               status: "rejected",
               finalPrice: null,
+              successful: false,
               reason: `Seller walked away: ${move.message}`,
             };
             break;
@@ -153,6 +164,7 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
               negotiationId: negotiation.id,
               status: "accepted",
               finalPrice: lastBuyerPrice,
+              successful: true,
               reason: move.message,
             };
             break;
@@ -166,50 +178,49 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
       negotiationId: negotiation.id,
       status: "error",
       finalPrice: null,
+      successful: false,
       reason: (err as Error).message,
     };
   }
 
-  // Final safety check before booking the deal: make sure listing is still available
-  // and price is within both reservations. Prevents one listing being sold twice.
+  // Final safety check before accepting: make sure product is still available
+  // and price is within the buyer's budget. Prevents one product being sold twice.
   if (result.status === "accepted" && result.finalPrice != null) {
-    const dealResult = await prisma.$transaction(async (tx) => {
-      const fresh = await tx.listing.findUnique({ where: { id: listingId } });
+    const acceptance = await prisma.$transaction(async (tx) => {
+      const fresh = await tx.product.findUnique({ where: { id: productId } });
       if (!fresh || fresh.status !== "active") {
-        return { ok: false as const, reason: "Listing was sold or withdrawn during negotiation." };
-      }
-      if (result.finalPrice! < fresh.minPrice) {
-        return { ok: false as const, reason: "Final price below seller floor (safety check)." };
+        return { ok: false as const, reason: "Product was sold or withdrawn during negotiation." };
       }
       if (result.finalPrice! > search.maxPrice) {
         return { ok: false as const, reason: "Final price above buyer ceiling (safety check)." };
       }
-      const deal = await tx.deal.create({
-        data: {
-          negotiationId: negotiation.id,
-          listingId,
-          searchId,
-          buyerId: search.buyerId,
-          sellerId: fresh.sellerId,
-          finalPrice: result.finalPrice!,
-        },
-      });
-      await tx.listing.update({
-        where: { id: listingId },
+      await tx.product.update({
+        where: { id: productId },
         data: { status: "sold" },
       });
-      return { ok: true as const, dealId: deal.id };
+      await tx.negotiation.update({
+        where: { id: negotiation.id },
+        data: {
+          status: "accepted",
+          successful: true,
+          finalPrice: result.finalPrice!,
+          reason: result.reason,
+          completedAt: new Date(),
+        },
+      });
+      return { ok: true as const };
     });
 
-    if (dealResult.ok) {
-      result.dealId = dealResult.dealId;
-    } else {
+    if (!acceptance.ok) {
       result = {
         negotiationId: negotiation.id,
         status: "rejected",
         finalPrice: null,
-        reason: dealResult.reason,
+        successful: false,
+        reason: acceptance.reason,
       };
+    } else {
+      return result;
     }
   }
 
@@ -217,6 +228,7 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
     where: { id: negotiation.id },
     data: {
       status: result.status,
+      successful: result.successful,
       finalPrice: result.finalPrice,
       reason: result.reason,
       completedAt: new Date(),

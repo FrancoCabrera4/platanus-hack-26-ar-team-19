@@ -12,9 +12,8 @@ negotiationsRouter.get("/:id", async (req, res) => {
     where: { id: req.params.id },
     include: {
       messages: { orderBy: { createdAt: "asc" } },
-      listing: { select: { id: true, title: true, askPrice: true } },
+      product: { select: { id: true, title: true, askPrice: true } },
       search: { select: { buyerId: true } },
-      deal: true,
     },
   });
   if (!neg) return res.status(404).json({ error: "negotiation not found" });

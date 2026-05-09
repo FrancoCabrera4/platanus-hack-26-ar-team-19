@@ -4,17 +4,16 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   getMe,
-  getBuyerConversation,
+  getConversation,
   getSearch,
-  listBuyerConversations,
-  listListings,
+  listConversations,
+  listProducts,
   logout,
-  startBuyerConversation,
-  startSellerConversation,
+  startConversation,
   streamMessage,
   type AuthUser,
   type ConversationSummary,
-  type Listing,
+  type Product,
 } from "@/lib/api";
 
 type NegStatus = "accepted" | "rejected" | "running" | "pending" | null;
@@ -24,7 +23,7 @@ type Tile = {
   title: string;
   askPrice?: number;
   imageUrl?: string;
-  dealPrice?: number;
+  finalPrice?: number;
   negStatus: NegStatus;
   negId?: string;
   h: number;
@@ -54,14 +53,14 @@ const TILE_COLORS = [
   "hsl(220 14% 90%)",
   "hsl(220 14% 92%)",
 ];
-const LISTINGS_PAGE_SIZE = 40;
+const PRODUCTS_PAGE_SIZE = 40;
 
-function listingsToTiles(listings: Listing[]): Tile[] {
-  return listings.map((l, i) => ({
-    id: l.id,
-    title: l.title,
-    askPrice: l.askPrice,
-    imageUrl: l.imageUrl ?? undefined,
+function productsToTiles(products: Product[]): Tile[] {
+  return products.map((product, i) => ({
+    id: product.id,
+    title: product.title,
+    askPrice: product.askPrice,
+    imageUrl: product.imageUrl ?? undefined,
     negStatus: null,
     h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
     color: TILE_COLORS[i % TILE_COLORS.length]!,
@@ -79,7 +78,7 @@ type Message = {
   content: string;
 };
 
-type ChatMode = "idle" | "buyer" | "seller";
+type ChatMode = "idle" | "buying" | "posting_product";
 
 export default function ExplorePage() {
   const router = useRouter();
@@ -90,8 +89,8 @@ export default function ExplorePage() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [listings, setListings] = useState<Listing[]>([]);
-  const [visibleListingCount, setVisibleListingCount] = useState(LISTINGS_PAGE_SIZE);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [visibleProductCount, setVisibleProductCount] = useState(PRODUCTS_PAGE_SIZE);
   const [searchTiles, setSearchTiles] = useState<Tile[]>([]);
   const [searching, setSearching] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -100,13 +99,13 @@ export default function ExplorePage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const chatOpen = messages.length > 0;
-  const visibleListings = useMemo(
-    () => listings.slice(0, visibleListingCount),
-    [listings, visibleListingCount],
+  const visibleProducts = useMemo(
+    () => products.slice(0, visibleProductCount),
+    [products, visibleProductCount],
   );
-  const browseTiles = listings.length > 0 ? listingsToTiles(visibleListings) : FALLBACK_TILES;
+  const browseTiles = products.length > 0 ? productsToTiles(visibleProducts) : FALLBACK_TILES;
   const tiles = searchTiles.length > 0 || searching ? searchTiles : browseTiles;
-  const hasMoreListings = visibleListingCount < listings.length;
+  const hasMoreProducts = visibleProductCount < products.length;
 
   useEffect(() => {
     getMe()
@@ -121,11 +120,11 @@ export default function ExplorePage() {
       .finally(() => setAuthLoading(false));
   }, [router]);
 
-  const refreshListings = useCallback(() => {
-    listListings()
-      .then((nextListings) => {
-        setListings(nextListings);
-        setVisibleListingCount(LISTINGS_PAGE_SIZE);
+  const refreshProducts = useCallback(() => {
+    listProducts()
+      .then((nextProducts) => {
+        setProducts(nextProducts);
+        setVisibleProductCount(PRODUCTS_PAGE_SIZE);
       })
       .catch(() => {
         // keep fallback tiles
@@ -133,8 +132,8 @@ export default function ExplorePage() {
   }, []);
 
   useEffect(() => {
-    refreshListings();
-  }, [refreshListings]);
+    refreshProducts();
+  }, [refreshProducts]);
 
   async function pollSearch(searchId: string) {
     setSearching(true);
@@ -149,20 +148,20 @@ export default function ExplorePage() {
           if (seenNegotiations.has(neg.id)) continue;
           seenNegotiations.add(neg.id);
 
-          const listing = neg.listing;
+          const product = neg.product;
           const newTile: Tile = {
-            id: listing.id,
-            title: listing.title,
-            askPrice: listing.askPrice,
-            imageUrl: listing.imageUrl ?? undefined,
-            dealPrice: neg.finalPrice ?? undefined,
+            id: product.id,
+            title: product.title,
+            askPrice: product.askPrice,
+            imageUrl: product.imageUrl ?? undefined,
+            finalPrice: neg.finalPrice ?? undefined,
             negStatus: neg.status as NegStatus,
             negId: neg.id,
             h: TILE_HEIGHTS[seenNegotiations.size % TILE_HEIGHTS.length]!,
             color: TILE_COLORS[seenNegotiations.size % TILE_COLORS.length]!,
           };
           setSearchTiles((prev) => {
-            const existing = prev.findIndex((t) => t.id === listing.id);
+            const existing = prev.findIndex((t) => t.id === product.id);
             if (existing >= 0) {
               const copy = [...prev];
               copy[existing] = newTile;
@@ -172,22 +171,23 @@ export default function ExplorePage() {
           });
 
           if (neg.status === "accepted" && neg.finalPrice) {
-            setMessages((prev) => [...prev, { role: "assistant", content: `Encontré "${listing.title}" y cerré un deal a ${formatARS(neg.finalPrice!)}` }]);
+            setMessages((prev) => [...prev, { role: "assistant", content: `Encontré "${product.title}" y cerré la negociación a ${formatARS(neg.finalPrice!)}` }]);
           } else if (neg.status === "rejected") {
-            setMessages((prev) => [...prev, { role: "assistant", content: `"${listing.title}" — no se pudo cerrar trato, sigo buscando...` }]);
+            setMessages((prev) => [...prev, { role: "assistant", content: `"${product.title}" — no se pudo cerrar trato, sigo buscando...` }]);
           } else {
-            setMessages((prev) => [...prev, { role: "assistant", content: `Negociando "${listing.title}"...` }]);
+            setMessages((prev) => [...prev, { role: "assistant", content: `Negociando "${product.title}"...` }]);
           }
         }
 
         if (search.status === "completed" || search.status === "failed") {
           setSearching(false);
-          const deal = search.deals[0];
-          if (deal) {
-            setMessages((prev) => [...prev, { role: "assistant", content: `Listo! Tu mejor deal quedó en ${formatARS(deal.finalPrice)}.` }]);
+          const accepted = search.negotiations.find((neg) => neg.status === "accepted");
+          const acceptedPrice = accepted?.finalPrice;
+          if (acceptedPrice != null) {
+            setMessages((prev) => [...prev, { role: "assistant", content: `Listo! Tu negociación cerró en ${formatARS(acceptedPrice)}.` }]);
           } else if (seenNegotiations.size === 0) {
             setMessages((prev) => [...prev, { role: "assistant", content: "No encontré productos que matcheen. Probá con otra búsqueda." }]);
-            refreshListings();
+            refreshProducts();
           }
           return;
         }
@@ -212,19 +212,19 @@ export default function ExplorePage() {
 
   useEffect(() => {
     const marker = loadMoreRef.current;
-    if (!marker || !hasMoreListings) return;
+    if (!marker || !hasMoreProducts) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (!entry?.isIntersecting) return;
-        setVisibleListingCount((count) => Math.min(count + LISTINGS_PAGE_SIZE, listings.length));
+        setVisibleProductCount((count) => Math.min(count + PRODUCTS_PAGE_SIZE, products.length));
       },
       { rootMargin: "600px 0px" },
     );
 
     observer.observe(marker);
     return () => observer.disconnect();
-  }, [hasMoreListings, listings.length, visibleListingCount]);
+  }, [hasMoreProducts, products.length, visibleProductCount]);
 
   async function handleLogout() {
     await logout();
@@ -233,8 +233,8 @@ export default function ExplorePage() {
 
   function detectMode(text: string): ChatMode {
     const lower = text.toLowerCase();
-    if (SELL_KEYWORDS.some((kw) => lower.includes(kw))) return "seller";
-    return "buyer";
+    if (SELL_KEYWORDS.some((kw) => lower.includes(kw))) return "posting_product";
+    return "buying";
   }
 
   const appendToLastAssistant = useCallback((chunk: string) => {
@@ -265,17 +265,13 @@ export default function ExplorePage() {
       if (!convId) {
         mode = detectMode(text);
         setChatMode(mode);
-        const conv =
-          mode === "seller"
-            ? await startSellerConversation()
-            : await startBuyerConversation();
+        const conv = await startConversation(mode === "posting_product" ? "posting_product" : "buying");
         convId = conv.id;
         setConversationId(conv.id);
       }
       if (!convId) throw new Error("No se pudo iniciar la conversación.");
 
       await streamMessage(
-        mode === "seller" ? "seller" : "buyer",
         convId,
         text,
         (chunk) => appendToLastAssistant(chunk),
@@ -283,9 +279,9 @@ export default function ExplorePage() {
           if (data.searchId) {
             appendToLastAssistant("\n\nBuscando productos que matcheen...");
             pollSearch(data.searchId);
-          } else if (data.listingId) {
+          } else if (data.productId) {
             appendToLastAssistant("\n\nTu publicación está lista.");
-            refreshListings();
+            refreshProducts();
           }
         },
         (error) => {
@@ -324,7 +320,7 @@ export default function ExplorePage() {
       return;
     }
     try {
-      const convs = await listBuyerConversations();
+      const convs = await listConversations();
       setChatHistory(convs);
     } catch { /* ignore */ }
     setShowHistory(true);
@@ -332,9 +328,9 @@ export default function ExplorePage() {
 
   async function restoreChat(convId: string) {
     try {
-      const conv = await getBuyerConversation(convId);
+      const conv = await getConversation(convId);
       setConversationId(conv.id);
-      setChatMode("buyer");
+      setChatMode(conv.mode);
       setMessages(conv.messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })));
       setShowHistory(false);
     } catch { /* ignore */ }
@@ -390,7 +386,7 @@ export default function ExplorePage() {
               )}
               {item.negStatus === "accepted" && (
                 <span className="absolute top-2 left-2 bg-accent text-accent-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  Deal cerrado
+                  Cerrado
                 </span>
               )}
               {item.negStatus === "rejected" && (
@@ -407,8 +403,8 @@ export default function ExplorePage() {
             <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
               {item.title}
             </p>
-            {item.dealPrice != null ? (
-              <p className="text-xs text-accent px-0.5 font-bold">{formatARS(item.dealPrice)}</p>
+            {item.finalPrice != null ? (
+              <p className="text-xs text-accent px-0.5 font-bold">{formatARS(item.finalPrice)}</p>
             ) : item.askPrice != null ? (
               <p className="text-xs text-foreground/80 px-0.5 font-medium">{formatARS(item.askPrice)}</p>
             ) : null}
@@ -438,9 +434,9 @@ export default function ExplorePage() {
         )}
       </div>
 
-      {listings.length > LISTINGS_PAGE_SIZE && (
+      {products.length > PRODUCTS_PAGE_SIZE && (
         <div ref={loadMoreRef} className="px-4 pb-32 pt-2 text-center text-xs text-muted-foreground">
-          {hasMoreListings ? `Mostrando ${visibleListings.length} de ${listings.length}` : "No hay más publicaciones"}
+          {hasMoreProducts ? `Mostrando ${visibleProducts.length} de ${products.length}` : "No hay más publicaciones"}
         </div>
       )}
 

@@ -1,19 +1,17 @@
 import { generateJSON, generateStreamJSON, type ChatTurn } from "../llm/gemini";
 
-export interface SellerListingDraft {
+export interface SellerProductDraft {
   title?: string;
   description?: string;
   category?: string;
   condition?: string;
   askPrice?: number;
-  minPrice?: number;
-  maxPrice?: number;
-  strategyNotes?: string;
+  negotiationStrategy?: string;
 }
 
 export interface SellerOnboardingTurn {
   reply: string;
-  state: SellerListingDraft;
+  state: SellerProductDraft;
   done: boolean;
 }
 
@@ -24,16 +22,14 @@ Your goal is to interview them efficiently and extract:
   - category: e.g. electronics, furniture, clothing, vehicles, books, etc.
   - condition: new | like-new | good | fair | poor
   - askPrice: the public list price (number, in the local currency, default ARS)
-  - minPrice: the LOWEST price they will accept (kept private from buyers — this is their floor)
-  - maxPrice: optional aspirational ceiling
-  - strategyNotes: free-text notes about negotiation strategy (e.g. "rush sale", "willing to bundle")
+  - negotiationStrategy: how flexible they are on price, how quickly they want to sell, and any negotiation guidance
 
 Rules:
   - Ask ONE focused question per turn. Do not dump a long list of questions.
   - Be friendly, concise, and natural. Match the user's language (English/Spanish).
   - Update the state with every new fact. Never invent values; only fill in what the user told you.
-  - Once you have at minimum: title, description, askPrice, minPrice, mark done=true.
-  - If done=true, your reply should briefly summarize the listing and confirm publication.
+  - Once you have at minimum: title, description, askPrice, negotiationStrategy, mark done=true.
+  - If done=true, your reply should briefly summarize the product and confirm publication.
   - Always respond in JSON matching the provided schema.`;
 
 const SCHEMA = {
@@ -48,9 +44,7 @@ const SCHEMA = {
         category: { type: "string" },
         condition: { type: "string" },
         askPrice: { type: "number" },
-        minPrice: { type: "number" },
-        maxPrice: { type: "number" },
-        strategyNotes: { type: "string" },
+        negotiationStrategy: { type: "string" },
       },
     },
     done: { type: "boolean" },
@@ -60,7 +54,7 @@ const SCHEMA = {
 
 export async function runSellerOnboardingTurn(
   history: ChatTurn[],
-  currentState: SellerListingDraft,
+  currentState: SellerProductDraft,
 ): Promise<SellerOnboardingTurn> {
   const stateNote: ChatTurn = {
     role: "system",
@@ -77,7 +71,7 @@ export async function runSellerOnboardingTurn(
 
 export async function streamSellerOnboardingTurn(
   history: ChatTurn[],
-  currentState: SellerListingDraft,
+  currentState: SellerProductDraft,
   onChunk: (text: string) => void,
 ): Promise<SellerOnboardingTurn> {
   const stateNote = `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;

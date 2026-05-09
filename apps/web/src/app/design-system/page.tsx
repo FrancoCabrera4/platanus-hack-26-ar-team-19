@@ -49,7 +49,7 @@ export default function DesignSystemPage() {
             <p className="text-xs text-muted-foreground mb-3 uppercase tracking-wider">Georgia Italic — Headings</p>
             <div className="space-y-2">
               <p className="text-4xl" style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}>Tu agente negocia por vos</p>
-              <p className="text-2xl" style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}>Deal cerrado a $220</p>
+              <p className="text-2xl" style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}>Negociación cerrada a $220</p>
               <p className="text-lg" style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}>Nueva oferta recibida</p>
             </div>
           </div>
@@ -83,7 +83,7 @@ export default function DesignSystemPage() {
           </div>
           <div className="flex items-center gap-6 text-sm">
             <span className="text-muted-foreground cursor-pointer">Explorar</span>
-            <span className="text-muted-foreground cursor-pointer">Mis Deals</span>
+            <span className="text-muted-foreground cursor-pointer">Mis negociaciones</span>
             <span className="text-muted-foreground cursor-pointer">Notificaciones</span>
           </div>
           <div className="flex items-center gap-3">
@@ -108,7 +108,7 @@ export default function DesignSystemPage() {
             Tu agente negocia por vos
           </h3>
           <p className="text-muted-foreground max-w-lg mx-auto mb-8">
-            Decile a tu agente qué querés vender o comprar. Él se encarga de encontrar el mejor deal.
+            Decile a tu agente qué querés vender o comprar. Él se encarga de encontrar el mejor trato.
           </p>
           <div className="flex items-center justify-center gap-3">
             <button className="bg-primary text-primary-foreground px-6 py-3 rounded-md text-sm font-medium">
@@ -121,10 +121,10 @@ export default function DesignSystemPage() {
         </div>
       </section>
 
-      {/* ─── Listing cards ─── */}
+      {/* ─── Product cards ─── */}
       <section className="p-8 border-b border-border">
         <h2 className="text-xl font-bold mb-4" style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}>
-          Listings
+          Products
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
@@ -177,7 +177,7 @@ export default function DesignSystemPage() {
             </div>
             <div className="flex gap-2">
               <div className="bg-muted rounded-lg rounded-tl-none p-3 max-w-[80%]">
-                <p className="text-sm">Perfecto! Trek, precio ideal $300, mínimo $180. En qué condición está?</p>
+                <p className="text-sm">Perfecto! Trek a $300. Qué tan flexible sos con ese precio y en qué condición está?</p>
               </div>
             </div>
           </div>
@@ -222,17 +222,17 @@ export default function DesignSystemPage() {
         </div>
       </section>
 
-      {/* ─── Deal ─── */}
+      {/* ─── Outcome ─── */}
       <section className="p-8 border-b border-border">
         <h2 className="text-xl font-bold mb-4" style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}>
-          Deal Cerrado
+          Negociación Cerrada
         </h2>
         <div className="rounded-lg border-2 border-accent bg-card p-6 max-w-md mx-auto text-center">
           <div className="w-12 h-12 rounded-full bg-accent mx-auto mb-4 flex items-center justify-center">
             <span className="text-accent-foreground text-xl font-bold">✓</span>
           </div>
           <h4 className="text-xl mb-1" style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}>
-            Deal cerrado!
+            Negociación cerrada!
           </h4>
           <p className="text-muted-foreground text-sm mb-4">Bicicleta Trek FX3</p>
           <p className="text-3xl font-bold mb-4">$220 USD</p>

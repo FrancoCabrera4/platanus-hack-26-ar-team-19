@@ -2,7 +2,7 @@ import { generateJSON, type ChatTurn } from "../llm/gemini";
 import type { NegotiatorMove } from "./seller-negotiator";
 
 export interface BuyerNegotiatorContext {
-  listing: {
+  product: {
     title: string;
     description: string;
     category?: string | null;
@@ -13,7 +13,7 @@ export interface BuyerNegotiatorContext {
     query: string;
     requirements?: string | null;
     maxPrice: number;
-    minPrice?: number | null;
+    negotiationStrategy?: string | null;
   };
   transcript: { side: "seller" | "buyer"; price: number | null; message: string }[];
   turnsRemaining: number;
@@ -53,16 +53,16 @@ export async function buyerMove(ctx: BuyerNegotiatorContext): Promise<Negotiator
     [...ctx.transcript].reverse().find((m) => m.side === "seller")?.price ?? null;
   const isOpening = ctx.transcript.length === 0;
 
-  const userPrompt = `Listing (public):
-- title: ${ctx.listing.title}
-- description: ${ctx.listing.description}
-- category: ${ctx.listing.category ?? "n/a"}
-- condition: ${ctx.listing.condition ?? "n/a"}
-- askPrice: ${ctx.listing.askPrice}
+  const userPrompt = `Product (public):
+- title: ${ctx.product.title}
+- description: ${ctx.product.description}
+- category: ${ctx.product.category ?? "n/a"}
+- condition: ${ctx.product.condition ?? "n/a"}
+- askPrice: ${ctx.product.askPrice}
 
 Your private constraints:
 - maxPrice (ceiling, never reveal): ${ctx.search.maxPrice}
-- ideal floor: ${ctx.search.minPrice ?? "n/a"}
+- negotiationStrategy: ${ctx.search.negotiationStrategy ?? "none"}
 - what you want: ${ctx.search.query}
 - requirements: ${ctx.search.requirements ?? "none"}
 

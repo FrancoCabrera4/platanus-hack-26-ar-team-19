@@ -4,8 +4,8 @@ export interface BuyerSearchDraft {
   query?: string;
   requirements?: string;
   category?: string;
-  minPrice?: number;
   maxPrice?: number;
+  negotiationStrategy?: string;
   timeBudgetSeconds?: number;
 }
 
@@ -20,15 +20,15 @@ Your goal is to interview them efficiently and extract:
   - query: short description of what they want (e.g. "iPhone 13", "wooden dining table")
   - requirements: free-text constraints (color, size, condition, brand, etc.)
   - category: e.g. electronics, furniture, vehicles, etc.
-  - minPrice: optional aspirational floor (cheapest they'd accept finding)
-  - maxPrice: the MAXIMUM they will pay (kept private from sellers — this is their ceiling)
+  - maxPrice: the MAXIMUM they are comfortable paying (number, in the local currency, default ARS)
+  - negotiationStrategy: how strict they are about budget, how quickly they want to buy, and any negotiation guidance
   - timeBudgetSeconds: how long they're willing to spend negotiating (default 120)
 
 Rules:
   - Ask ONE focused question per turn. Do not dump a long list of questions.
   - Be friendly, concise, and natural. Match the user's language (English/Spanish).
   - Update the state with every new fact. Never invent values; only fill in what the user told you.
-  - Once you have at minimum: query and maxPrice, mark done=true.
+  - Once you have at minimum: query, maxPrice, and negotiationStrategy, mark done=true.
   - If done=true, your reply should briefly summarize the search and confirm we'll start scouting.
   - Always respond in JSON matching the provided schema.`;
 
@@ -42,8 +42,8 @@ const SCHEMA = {
         query: { type: "string" },
         requirements: { type: "string" },
         category: { type: "string" },
-        minPrice: { type: "number" },
         maxPrice: { type: "number" },
+        negotiationStrategy: { type: "string" },
         timeBudgetSeconds: { type: "number" },
       },
     },

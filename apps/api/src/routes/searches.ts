@@ -24,16 +24,15 @@ searchesRouter.post("/:id/run", async (req, res) => {
   return res.status(202).json({ jobId, searchId: search.id });
 });
 
-// GET /searches/:id — current state + deals
+// GET /searches/:id — current state + accepted negotiation outcome
 searchesRouter.get("/:id", async (req, res) => {
   const user = res.locals.user as AuthUser;
   const search = await prisma.buyerSearch.findUnique({
     where: { id: req.params.id },
     include: {
       negotiations: {
-        include: { listing: { select: { id: true, title: true, askPrice: true, imageUrl: true } } },
+        include: { product: { select: { id: true, title: true, askPrice: true, imageUrl: true } } },
       },
-      deals: true,
       jobs: { orderBy: { createdAt: "desc" }, take: 5 },
     },
   });

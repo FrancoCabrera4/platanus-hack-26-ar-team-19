@@ -4,9 +4,8 @@ import morgan from "morgan";
 import cors from "cors";
 
 import { usersRouter } from "./routes/users";
-import { sellersRouter } from "./routes/sellers";
-import { buyersRouter } from "./routes/buyers";
-import { listingsRouter } from "./routes/listings";
+import { conversationsRouter } from "./routes/conversations";
+import { productsRouter } from "./routes/products";
 import { searchesRouter } from "./routes/searches";
 import { negotiationsRouter } from "./routes/negotiations";
 import { jobsRouter } from "./routes/jobs";
@@ -28,9 +27,8 @@ export const createServer = (): Express => {
     .get("/status", (_req, res) => res.json({ ok: true }))
     .use("/auth", authRouter)
     .use("/users", usersRouter)
-    .use("/sellers", sellersRouter)
-    .use("/buyers", buyersRouter)
-    .use("/listings", listingsRouter)
+    .use("/conversations", conversationsRouter)
+    .use("/products", productsRouter)
     .use("/searches", searchesRouter)
     .use("/negotiations", negotiationsRouter)
     .use("/jobs", jobsRouter);

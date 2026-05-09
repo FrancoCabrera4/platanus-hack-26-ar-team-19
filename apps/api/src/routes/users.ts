@@ -20,7 +20,7 @@ usersRouter.post("/", async (req, res) => {
     return res.status(200).json(publicUser(existing));
   }
   const user = await prisma.user.create({
-    data: { ...parsed.data, role: "both", emailVerifiedAt: new Date() },
+    data: parsed.data,
   });
   return res.status(201).json(publicUser(user));
 });
