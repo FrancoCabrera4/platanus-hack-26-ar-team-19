@@ -110,6 +110,7 @@ export async function getConversation(id: string) {
     messages: { role: string; content: string }[];
     searchId?: string | null;
     productId?: string | null;
+    state?: { imageUrl?: string | null };
     search?: { id: string } | null;
     product?: { id: string } | null;
   }>(`/conversations/${id}`);
@@ -125,6 +126,7 @@ export async function startConversation(mode: ConversationMode) {
 export async function streamMessage(
   conversationId: string,
   content: string,
+  imageUrl: string | undefined,
   onChunk: (text: string) => void,
   onDone: (data: { state: unknown; searchId?: string; productId?: string; jobId?: string; suggestions?: string[] }) => void,
   onError: (error: string) => void,
@@ -288,10 +290,6 @@ export async function getJob(id: string): Promise<JobDetail> {
 // Backend endpoint: POST /uploads/image (requireAuth, multipart/form-data)
 // Expected: FormData with field "image" (File)
 // Returns: { url: string } — the public URL of the uploaded image.
-// TODO: backend needs to add this endpoint. Example handler:
-//   1. Accept multipart via multer
-//   2. Save file to /public/uploads/ or an S3 bucket
-//   3. Return { url: "/uploads/<filename>" } or full S3 URL
 export async function uploadImage(file: File): Promise<{ url: string }> {
   const form = new FormData();
   form.append("image", file);
@@ -301,7 +299,8 @@ export async function uploadImage(file: File): Promise<{ url: string }> {
     body: form,
   });
   if (!res.ok) throw new Error("Upload failed");
-  return res.json();
+  const data = await res.json() as { url: string };
+  return { url: new URL(data.url, API_URL).toString() };
 }
 
 // --- Audio transcription (Whisper) ---

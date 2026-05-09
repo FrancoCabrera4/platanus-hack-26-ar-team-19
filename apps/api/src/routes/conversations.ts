@@ -26,7 +26,7 @@ const ConversationMode = z.enum(["buying", "posting_product"]);
 const StartConversation = z.object({ mode: ConversationMode });
 const PostMessage = z.object({
   content: z.string().min(1),
-  imageUrl: z.string().optional(),
+  imageUrl: z.string().min(1).optional(),
 });
 
 type ConversationMode = z.infer<typeof ConversationMode>;
@@ -146,7 +146,8 @@ async function completeConversation(
       !productState.title ||
       !productState.description ||
       !productState.askPrice ||
-      !productState.negotiationStrategy
+      !productState.negotiationStrategy ||
+      !productState.imageUrl
     ) {
       return {};
     }
@@ -161,7 +162,7 @@ async function completeConversation(
         condition: productState.condition ?? null,
         askPrice: productState.askPrice,
         negotiationStrategy: productState.negotiationStrategy,
-        imageUrl: productState.imageUrl ?? null,
+        imageUrl: productState.imageUrl,
       },
     });
 
@@ -369,16 +370,18 @@ conversationsRouter.post("/:id/messages", asyncHandler(async (req, res) => {
     state,
     mlData,
   );
-  const merged = { ...state, ...turn.state };
+  const merged = {
+    ...state,
+    ...turn.state,
+    ...(conversation.mode === "posting_product" && parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
+  };
 
-  const messagesToSave = [
-    { conversationId: conversation.id, role: "assistant", content: turn.reply },
-    { conversationId: conversation.id, ...stateMessage(merged) },
-  ];
-  if (mlData && !existingML) {
-    messagesToSave.push({ conversationId: conversation.id, ...mlMessage(mlData) });
-  }
-  await prisma.conversationMessage.createMany({ data: messagesToSave });
+  await prisma.conversationMessage.createMany({
+    data: [
+      { conversationId: conversation.id, role: "assistant", content: turn.reply },
+      { conversationId: conversation.id, ...stateMessage(merged) },
+    ],
+  });
 
   const completion = await completeConversation(
     conversation.id,
@@ -445,16 +448,18 @@ conversationsRouter.post("/:id/messages/stream", asyncHandler(async (req, res) =
       mlData,
       (chunk) => sseSend(res, { chunk }),
     );
-    const merged = { ...state, ...turn.state };
+    const merged = {
+      ...state,
+      ...turn.state,
+      ...(conversation.mode === "posting_product" && parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
+    };
 
-    const messagesToSave = [
-      { conversationId: conversation.id, role: "assistant", content: turn.reply },
-      { conversationId: conversation.id, ...stateMessage(merged) },
-    ];
-    if (mlData && !existingML) {
-      messagesToSave.push({ conversationId: conversation.id, ...mlMessage(mlData) });
-    }
-    await prisma.conversationMessage.createMany({ data: messagesToSave });
+    await prisma.conversationMessage.createMany({
+      data: [
+        { conversationId: conversation.id, role: "assistant", content: turn.reply },
+        { conversationId: conversation.id, ...stateMessage(merged) },
+      ],
+    });
 
     const completion = await completeConversation(
       conversation.id,

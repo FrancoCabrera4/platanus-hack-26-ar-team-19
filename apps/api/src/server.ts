@@ -11,7 +11,7 @@ import { searchesRouter } from "./routes/searches";
 import { negotiationsRouter } from "./routes/negotiations";
 import { jobsRouter } from "./routes/jobs";
 import { authRouter } from "./routes/auth";
-import { uploadsRouter } from "./routes/uploads";
+import { uploadsDir, uploadsRouter } from "./routes/uploads";
 import { log } from "@repo/logger";
 
 export const createServer = (): Express => {
@@ -26,7 +26,7 @@ export const createServer = (): Express => {
       origin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
       credentials: true,
     }))
-    .use("/uploads", express.static(path.resolve(__dirname, "../public/uploads")))
+    .use("/uploads", express.static(uploadsDir))
     .get("/status", (_req, res) => res.json({ ok: true }))
     .use("/auth", authRouter)
     .use("/users", usersRouter)

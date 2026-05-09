@@ -127,6 +127,7 @@ export default function ExplorePage() {
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [pendingImage, setPendingImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [productImageUrl, setProductImageUrl] = useState<string | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -419,12 +420,25 @@ export default function ExplorePage() {
     const text = input.trim();
     if (!text || streaming) return;
 
-    const msgImagePreview = imagePreview ?? undefined;
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: text, imageUrl: msgImagePreview },
-      { role: "assistant", content: "" },
-    ]);
+    const nextMode = chatMode === "idle" ? detectMode(text) : chatMode;
+    if (nextMode === "posting_product" && !pendingImage && !productImageUrl) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Para vender necesitás subir una imagen del producto antes de publicar. Tocá el botón + y adjuntá una foto.",
+        },
+      ]);
+      setChatMode("posting_product");
+      setChatCollapsed(false);
+      setTimeout(() => textareaRef.current?.focus(), 0);
+      return;
+    }
+
+    const msgContent = pendingImage
+      ? `${text}\n[Imagen adjunta: ${pendingImage.name}]`
+      : text;
+    setMessages((prev) => [...prev, { role: "user", content: msgContent }, { role: "assistant", content: "" }]);
     setInput("");
     setSuggestions([]);
     setStreaming(true);
@@ -434,16 +448,24 @@ export default function ExplorePage() {
     try {
       if (!user) throw new Error("No hay sesión activa.");
 
-      // Upload image if attached (TODO: connect backend POST /uploads/image)
-      let imageUrl: string | undefined;
+      let imageUrl = productImageUrl ?? undefined;
       if (pendingImage) {
         try {
           const upload = await uploadImage(pendingImage);
           imageUrl = upload.url;
+          setProductImageUrl(upload.url);
+          clearImage();
         } catch {
-          // Upload not available yet — continue without image
+          setMessages((prev) => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.role === "assistant") {
+              copy[copy.length - 1] = { ...last, content: "No pude subir la imagen. Intentá de nuevo antes de publicar." };
+            }
+            return copy;
+          });
+          return;
         }
-        clearImage();
       }
 
       let convId = conversationId;
@@ -463,6 +485,7 @@ export default function ExplorePage() {
       await streamMessage(
         convId,
         text,
+        mode === "posting_product" ? imageUrl : undefined,
         (chunk) => appendToLastAssistant(chunk),
         (data) => {
           if (data.suggestions?.length) setSuggestions(data.suggestions);
@@ -472,6 +495,7 @@ export default function ExplorePage() {
             pollSearch(data.searchId);
           } else if (data.productId) {
             appendToLastAssistant("\n\nTu publicación está lista.");
+            setProductImageUrl(null);
             refreshProducts();
           }
         },
@@ -627,6 +651,8 @@ export default function ExplorePage() {
     setMessages([]);
     setConversationId(null);
     setChatMode("idle");
+    setProductImageUrl(null);
+    clearImage();
     setSearchTiles([]);
     setShowHistory(false);
     setChatCollapsed(false);
@@ -653,12 +679,8 @@ export default function ExplorePage() {
       const conv = await getConversation(convId);
       setConversationId(conv.id);
       setChatMode(conv.mode);
-      setMessages(
-        conv.messages.map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        })),
-      );
+      setProductImageUrl(conv.mode === "posting_product" ? conv.state?.imageUrl ?? null : null);
+      setMessages(conv.messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })));
       setShowHistory(false);
       const searchId = conv.searchId ?? conv.search?.id;
       if (searchId) {
