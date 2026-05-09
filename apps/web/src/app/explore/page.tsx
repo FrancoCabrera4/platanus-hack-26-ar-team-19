@@ -87,6 +87,7 @@ export default function ExplorePage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsLoaded, setProductsLoaded] = useState(false);
   const [visibleProductCount, setVisibleProductCount] = useState(PRODUCTS_PAGE_SIZE);
   const [searchTiles, setSearchTiles] = useState<Tile[]>([]);
   const [searching, setSearching] = useState(false);
@@ -118,7 +119,7 @@ export default function ExplorePage() {
   );
   const browseTiles = products.length > 0 ? productsToTiles(visibleProducts) : [];
   const tiles = searchTiles.length > 0 || searching ? searchTiles : browseTiles;
-  const isLoadingProducts = products.length === 0 && !authLoading;
+  const isLoadingProducts = !productsLoaded && !authLoading;
   const hasMoreProducts = visibleProductCount < products.length;
 
   useEffect(() => {
@@ -142,9 +143,8 @@ export default function ExplorePage() {
         setProducts(nextProducts);
         setVisibleProductCount(PRODUCTS_PAGE_SIZE);
       })
-      .catch(() => {
-        // keep fallback tiles
-      });
+      .catch(() => {})
+      .finally(() => setProductsLoaded(true));
   }, []);
 
   useEffect(() => {
