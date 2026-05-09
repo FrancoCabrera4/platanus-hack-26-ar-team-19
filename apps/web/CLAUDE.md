@@ -46,13 +46,12 @@ pnpm build  # tsup build
 
 ### Database (packages/db)
 
-Prisma with PostgreSQL. Requires `DATABASE_URL` env var (see `packages/db/.env.example`).
+Prisma with SQLite (file at `packages/db/prisma/dev.db`). Requires `DATABASE_URL` env var. Use an absolute path so the seed scripts and the API process resolve the same file regardless of cwd.
 
 ```bash
-pnpm db:generate   # Generate Prisma client
-pnpm db:push       # Push schema to DB (no migration)
-pnpm db:dev        # Run migrations + generate client
-pnpm db:seed       # Seed database
+pnpm --filter api db:setup       # prisma db push + generate
+pnpm --filter @repo/db db:push
+pnpm --filter @repo/db db:generate
 ```
 
 Turbo runs `db:generate` automatically before `build` and `dev`.
