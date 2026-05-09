@@ -2,20 +2,17 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getMe } from "@/lib/api";
 
-export default function Page(): JSX.Element {
+export default function ChatPage() {
   const router = useRouter();
 
   useEffect(() => {
-    getMe()
-      .then((user) => router.replace(user ? "/explore" : "/signup"))
-      .catch(() => router.replace("/signup"));
+    router.replace("/explore");
   }, [router]);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background">
-      <p className="text-sm text-muted-foreground">Cargando...</p>
+      <p className="text-sm text-muted-foreground">Abriendo agente...</p>
     </main>
   );
 }

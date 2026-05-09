@@ -2,19 +2,39 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@repo/ui/components/ui/button";
 import { Input } from "@repo/ui/components/ui/input";
 import { Label } from "@repo/ui/components/ui/label";
+import { ApiError, signup } from "@/lib/api";
 
 export default function SignupPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"buyer" | "seller" | "both">("both");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [verificationToken, setVerificationToken] = useState<string | null>(null);
+  const router = useRouter();
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // TODO: conectar con backend
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await signup({ name, email, password, role });
+      if (res.verificationToken) {
+        setVerificationToken(res.verificationToken);
+      } else {
+        router.push("/onboarding");
+      }
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : "signup_failed";
+      setError(code === "email_already_registered" ? "Ese email ya está registrado." : "No se pudo crear la cuenta.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -60,7 +80,29 @@ export default function SignupPage() {
             </p>
           </div>
 
+          {verificationToken && (
+            <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <p className="font-medium">Cuenta creada. Token de verificación dev:</p>
+              <code className="mt-2 block break-all rounded bg-white/70 p-2 text-xs">
+                {verificationToken}
+              </code>
+              <div className="mt-3 flex gap-2">
+                <Button type="button" onClick={() => router.push(`/verify-email?token=${verificationToken}`)}>
+                  Verificar email
+                </Button>
+                <Button type="button" variant="outline" onClick={() => router.push("/onboarding")}>
+                  Seguir
+                </Button>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="name">Nombre</Label>
               <Input
@@ -70,6 +112,7 @@ export default function SignupPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
+                minLength={8}
               />
             </div>
 
@@ -117,8 +160,8 @@ export default function SignupPage() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full">
-              Crear cuenta
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? "Creando..." : "Crear cuenta"}
             </Button>
           </form>
 

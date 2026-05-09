@@ -10,6 +10,7 @@ import { listingsRouter } from "./routes/listings";
 import { searchesRouter } from "./routes/searches";
 import { negotiationsRouter } from "./routes/negotiations";
 import { jobsRouter } from "./routes/jobs";
+import { authRouter } from "./routes/auth";
 import { log } from "@repo/logger";
 
 export const createServer = (): Express => {
@@ -20,8 +21,12 @@ export const createServer = (): Express => {
     .use(morgan("dev"))
     .use(urlencoded({ extended: true }))
     .use(json({ limit: "1mb" }))
-    .use(cors())
+    .use(cors({
+      origin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
+      credentials: true,
+    }))
     .get("/status", (_req, res) => res.json({ ok: true }))
+    .use("/auth", authRouter)
     .use("/users", usersRouter)
     .use("/sellers", sellersRouter)
     .use("/buyers", buyersRouter)

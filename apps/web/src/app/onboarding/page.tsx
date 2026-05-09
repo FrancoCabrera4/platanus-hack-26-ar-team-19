@@ -21,6 +21,12 @@ export default function OnboardingPage() {
   const [mpConnected, setMpConnected] = useState(false);
   const router = useRouter();
 
+  function finishOnboarding() {
+    localStorage.setItem("am_onboarding_done", "1");
+    localStorage.setItem("am_mp_connected", mpConnected ? "1" : "0");
+    router.push("/explore");
+  }
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-8">
       <div className="w-full max-w-lg">
@@ -91,7 +97,7 @@ export default function OnboardingPage() {
               Conectá Mercado Pago
             </h1>
             <p className="text-muted-foreground text-sm mb-8">
-              Para que tu agente pueda cerrar deals y mover plata, necesitamos acceso a tu cuenta.
+                  En esta demo lo simulamos para dejar listo el flujo de pagos sin bloquear el uso.
             </p>
 
             <div className="rounded-lg border border-border p-6 mb-6">
@@ -114,11 +120,11 @@ export default function OnboardingPage() {
                 <div className="space-y-3">
                   <div className="flex items-start gap-3 text-sm text-muted-foreground">
                     <span className="text-primary mt-0.5">→</span>
-                    <span>Recibir pagos cuando tu agente cierre una venta</span>
+                    <span>Marcar tu cuenta como lista para recibir pagos cuando cierres una venta</span>
                   </div>
                   <div className="flex items-start gap-3 text-sm text-muted-foreground">
                     <span className="text-primary mt-0.5">→</span>
-                    <span>Pagar automáticamente cuando tu agente cierre una compra</span>
+                    <span>Simular el pago cuando tu agente cierre una compra</span>
                   </div>
                   <div className="flex items-start gap-3 text-sm text-muted-foreground">
                     <span className="text-primary mt-0.5">→</span>
@@ -137,7 +143,7 @@ export default function OnboardingPage() {
                   Conectar con Mercado Pago
                 </button>
                 <button
-                  onClick={() => setStep("ready")}
+                  onClick={finishOnboarding}
                   className="w-full h-11 text-muted-foreground text-sm hover:text-foreground transition-colors"
                 >
                   Omitir por ahora
@@ -145,7 +151,7 @@ export default function OnboardingPage() {
               </div>
             ) : (
               <button
-                onClick={() => setStep("ready")}
+                onClick={finishOnboarding}
                 className="w-full h-11 bg-foreground text-background rounded-lg text-sm font-medium hover:bg-foreground/90 transition-colors"
               >
                 Continuar
@@ -172,13 +178,13 @@ export default function OnboardingPage() {
 
             <div className="space-y-3">
               <button
-                onClick={() => router.push("/explore")}
+                onClick={finishOnboarding}
                 className="w-full h-11 bg-foreground text-background rounded-lg text-sm font-medium hover:bg-foreground/90 transition-colors"
               >
                 Explorar productos
               </button>
               <button
-                onClick={() => router.push("/chat")}
+                  onClick={finishOnboarding}
                 className="w-full h-11 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
               >
                 Hablar con mi agente

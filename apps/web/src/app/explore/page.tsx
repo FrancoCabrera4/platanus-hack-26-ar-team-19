@@ -3,11 +3,16 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  createUser,
+  ApiError,
+  getMe,
   listListings,
+  logout,
+  requestEmailVerification,
   startBuyerConversation,
   startSellerConversation,
   streamMessage,
+  verifyEmail,
+  type AuthUser,
   type Listing,
 } from "@/lib/api";
 
@@ -73,18 +78,30 @@ export default function ExplorePage() {
   const [streaming, setStreaming] = useState(false);
   const [chatMode, setChatMode] = useState<ChatMode>("idle");
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [verificationToken, setVerificationToken] = useState("");
+  const [devToken, setDevToken] = useState<string | null>(null);
   const [tiles, setTiles] = useState<Tile[]>(FALLBACK_TILES);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatOpen = messages.length > 0;
 
   useEffect(() => {
-    const stored = localStorage.getItem("am_user_id");
-    if (stored) setUserId(stored);
-  }, []);
+    getMe()
+      .then((me) => {
+        if (!me) {
+          router.replace("/login");
+          return;
+        }
+        setUser(me);
+      })
+      .catch(() => setAuthError("No se pudo cargar la sesión."))
+      .finally(() => setAuthLoading(false));
+  }, [router]);
 
-  useEffect(() => {
+  const refreshListings = useCallback(() => {
     listListings(40)
       .then((listings) => {
         if (listings.length > 0) setTiles(listingsToTiles(listings));
@@ -93,6 +110,10 @@ export default function ExplorePage() {
         // keep fallback tiles
       });
   }, []);
+
+  useEffect(() => {
+    refreshListings();
+  }, [refreshListings]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -105,12 +126,32 @@ export default function ExplorePage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  async function ensureUser(): Promise<string> {
-    if (userId) return userId;
-    const user = await createUser("Ignacio", "ignacio@agentmarket.app", "both");
-    localStorage.setItem("am_user_id", user.id);
-    setUserId(user.id);
-    return user.id;
+  async function handleLogout() {
+    await logout();
+    router.push("/login");
+  }
+
+  async function resendVerification() {
+    setAuthError(null);
+    try {
+      const res = await requestEmailVerification();
+      setDevToken(res.verificationToken ?? null);
+    } catch {
+      setAuthError("No se pudo generar un token de verificación.");
+    }
+  }
+
+  async function submitVerification() {
+    if (!verificationToken.trim()) return;
+    setAuthError(null);
+    try {
+      const res = await verifyEmail(verificationToken.trim());
+      setUser(res.user);
+      setDevToken(null);
+      setVerificationToken("");
+    } catch {
+      setAuthError("Token inválido o vencido.");
+    }
   }
 
   function detectMode(text: string): ChatMode {
@@ -140,7 +181,8 @@ export default function ExplorePage() {
     setStreaming(true);
 
     try {
-      const uid = await ensureUser();
+      if (!user) throw new Error("No hay sesión activa.");
+      if (!user.emailVerified) throw new ApiError(403, "email_not_verified");
       let convId = conversationId;
       let mode = chatMode;
 
@@ -149,8 +191,8 @@ export default function ExplorePage() {
         setChatMode(mode);
         const conv =
           mode === "seller"
-            ? await startSellerConversation(uid)
-            : await startBuyerConversation(uid);
+            ? await startSellerConversation()
+            : await startBuyerConversation();
         convId = conv.id;
         setConversationId(conv.id);
       }
@@ -168,6 +210,7 @@ export default function ExplorePage() {
             router.push(`/search/${data.searchId}`);
           } else if (data.listingId) {
             appendToLastAssistant(`\n\n✓ Tu publicación está lista (id: ${data.listingId.slice(0, 8)}…).`);
+            refreshListings();
           }
         },
         (error) => {
@@ -181,10 +224,14 @@ export default function ExplorePage() {
           });
         },
       );
-    } catch {
+    } catch (err) {
+      const message =
+        err instanceof ApiError && err.code === "email_not_verified"
+          ? "Verificá tu email antes de usar el agente."
+          : "Error conectando con el agente.";
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Error conectando con el agente." },
+        { role: "assistant", content: message },
       ]);
     } finally {
       setStreaming(false);
@@ -213,10 +260,54 @@ export default function ExplorePage() {
         >
           AgentMarket
         </p>
-        <div className="w-8 h-8 rounded-full bg-foreground flex items-center justify-center cursor-pointer">
-          <span className="text-background text-xs font-medium">IR</span>
+        <div className="flex items-center gap-3">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
+            {user?.name ?? "Cargando..."}
+          </span>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            Salir
+          </button>
+          <div className="w-8 h-8 rounded-full bg-foreground flex items-center justify-center">
+            <span className="text-background text-xs font-medium">
+              {(user?.name ?? "AM").slice(0, 2).toUpperCase()}
+            </span>
+          </div>
         </div>
       </header>
+
+      {authLoading && (
+        <div className="p-4 text-sm text-muted-foreground">Cargando sesión...</div>
+      )}
+
+      {user && !user.emailVerified && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <div className="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center">
+            <span className="font-medium">Verificá tu email para usar el agente.</span>
+            <input
+              value={verificationToken}
+              onChange={(e) => setVerificationToken(e.target.value)}
+              placeholder="Token dev"
+              className="h-8 flex-1 rounded-md border border-amber-200 bg-white px-2 text-xs outline-none"
+            />
+            <button onClick={submitVerification} className="h-8 rounded-md bg-foreground px-3 text-xs text-background">
+              Verificar
+            </button>
+            <button onClick={resendVerification} className="h-8 rounded-md border border-amber-300 px-3 text-xs">
+              Generar token
+            </button>
+          </div>
+          {devToken && (
+            <code className="mx-auto mt-2 block max-w-3xl break-all rounded bg-white/70 p-2 text-xs">
+              {devToken}
+            </code>
+          )}
+          {authError && <p className="mx-auto mt-2 max-w-3xl text-xs text-destructive">{authError}</p>}
+        </div>
+      )}
 
       <div className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28">
         {tiles.map((item) => (

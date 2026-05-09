@@ -1,14 +1,29 @@
+import {
+  GoogleGenerativeAI,
+  type Content,
+  type GenerateContentRequest,
+  type ResponseSchema,
+} from "@google/generative-ai";
 import OpenAI from "openai";
 import { log } from "@repo/logger";
 
-const apiKey = process.env.OPENAI_API_KEY;
-const modelName = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+type LlmProvider = "openai" | "gemini";
 
-if (!apiKey) {
+const openAiApiKey = process.env.OPENAI_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const provider = parseProvider(process.env.LLM_PROVIDER);
+const openAiModelName = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+const geminiModelName = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+
+if (provider === "openai" && !openAiApiKey) {
   log("WARN: OPENAI_API_KEY is not set — LLM calls will fail.");
 }
+if (provider === "gemini" && !geminiApiKey) {
+  log("WARN: GEMINI_API_KEY is not set — LLM calls will fail.");
+}
 
-const client = new OpenAI({ apiKey: apiKey ?? "missing" });
+const openAiClient = new OpenAI({ apiKey: openAiApiKey ?? "missing" });
+const geminiClient = new GoogleGenerativeAI(geminiApiKey ?? "missing");
 
 export interface ChatTurn {
   role: "user" | "assistant" | "system";
@@ -22,14 +37,26 @@ interface GenerateOptions {
   jsonSchema?: object;
 }
 
-function buildMessages(opts: GenerateOptions): OpenAI.ChatCompletionMessageParam[] {
-  const messages: OpenAI.ChatCompletionMessageParam[] = [];
+function parseProvider(value: string | undefined): LlmProvider {
+  if (value === "gemini" || value === "openai") return value;
+  if (value) {
+    log(`WARN: Unsupported LLM_PROVIDER="${value}". Falling back to auto-detect.`);
+  }
+  return openAiApiKey ? "openai" : "gemini";
+}
 
+function buildSystemContent(opts: GenerateOptions): string {
   let systemContent = opts.system ?? "";
   if (opts.jsonSchema) {
     systemContent += `\n\nYou MUST respond with valid JSON matching this exact schema:\n${JSON.stringify(opts.jsonSchema, null, 2)}\n\nIMPORTANT: Put the "reply" field FIRST in your JSON response.\nRespond ONLY with the JSON object, no extra text.`;
   }
+  return systemContent;
+}
 
+function buildOpenAiMessages(opts: GenerateOptions): OpenAI.ChatCompletionMessageParam[] {
+  const messages: OpenAI.ChatCompletionMessageParam[] = [];
+
+  const systemContent = buildSystemContent(opts);
   if (systemContent) {
     messages.push({ role: "system", content: systemContent });
   }
@@ -44,6 +71,51 @@ function buildMessages(opts: GenerateOptions): OpenAI.ChatCompletionMessageParam
   }
 
   return messages;
+}
+
+function buildGeminiContents(opts: GenerateOptions): Content[] {
+  if (opts.history.length === 0) {
+    return [{ role: "user", parts: [{ text: "Hola, empecemos." }] }];
+  }
+
+  return opts.history
+    .filter((turn) => turn.role !== "system")
+    .map((turn) => ({
+      role: turn.role === "assistant" ? "model" : "user",
+      parts: [{ text: turn.content }],
+    }));
+}
+
+function toGeminiSchema(schema: unknown): ResponseSchema {
+  if (!schema || typeof schema !== "object") return schema as ResponseSchema;
+
+  const input = schema as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(input)) {
+    if (key === "additionalProperties") continue;
+    if (key === "enum" && Array.isArray(value)) {
+      output.enum = value;
+      output.format = "enum";
+      continue;
+    }
+    if (key === "properties" && value && typeof value === "object") {
+      output.properties = Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([prop, propSchema]) => [
+          prop,
+          toGeminiSchema(propSchema),
+        ]),
+      );
+      continue;
+    }
+    if (key === "items") {
+      output.items = toGeminiSchema(value);
+      continue;
+    }
+    output[key] = value;
+  }
+
+  return output as unknown as ResponseSchema;
 }
 
 function normalizeResult(parsed: Record<string, unknown>) {
@@ -98,10 +170,18 @@ class ReplyExtractor {
 }
 
 export async function generate(opts: GenerateOptions): Promise<string> {
-  const messages = buildMessages(opts);
+  if (provider === "gemini") {
+    return generateWithGemini(opts);
+  }
+
+  return generateWithOpenAi(opts);
+}
+
+async function generateWithOpenAi(opts: GenerateOptions): Promise<string> {
+  const messages = buildOpenAiMessages(opts);
 
   const params: OpenAI.ChatCompletionCreateParams = {
-    model: modelName,
+    model: openAiModelName,
     messages,
     temperature: opts.temperature ?? 0.7,
   };
@@ -110,8 +190,31 @@ export async function generate(opts: GenerateOptions): Promise<string> {
     params.response_format = { type: "json_object" };
   }
 
-  const result = await client.chat.completions.create(params);
+  const result = await openAiClient.chat.completions.create(params);
   return result.choices[0]?.message?.content ?? "";
+}
+
+async function generateWithGemini(opts: GenerateOptions): Promise<string> {
+  const model = geminiClient.getGenerativeModel({
+    model: geminiModelName,
+    systemInstruction: buildSystemContent(opts),
+  });
+
+  const request: GenerateContentRequest = {
+    contents: buildGeminiContents(opts),
+    generationConfig: {
+      temperature: opts.temperature ?? 0.7,
+      ...(opts.jsonSchema
+        ? {
+            responseMimeType: "application/json",
+            responseSchema: toGeminiSchema(opts.jsonSchema),
+          }
+        : {}),
+    },
+  };
+
+  const result = await model.generateContent(request);
+  return result.response.text();
 }
 
 export async function generateJSON<T>(opts: GenerateOptions): Promise<T> {
@@ -125,8 +228,8 @@ export async function generateJSON<T>(opts: GenerateOptions): Promise<T> {
     normalizeResult(parsed);
     return parsed as T;
   } catch (err) {
-    log("OpenAI returned invalid JSON:", text);
-    throw new Error(`Failed to parse OpenAI JSON response: ${(err as Error).message}`);
+    log(`${provider} returned invalid JSON:`, text);
+    throw new Error(`Failed to parse ${provider} JSON response: ${(err as Error).message}`);
   }
 }
 
@@ -138,10 +241,21 @@ export async function generateStreamJSON<T>(
     throw new Error("generateStreamJSON requires a jsonSchema");
   }
 
-  const messages = buildMessages(opts);
+  if (provider === "gemini") {
+    return generateGeminiStreamJSON<T>(opts, onReplyChunk);
+  }
 
-  const stream = await client.chat.completions.create({
-    model: modelName,
+  return generateOpenAiStreamJSON<T>(opts, onReplyChunk);
+}
+
+async function generateOpenAiStreamJSON<T>(
+  opts: GenerateOptions,
+  onReplyChunk: (text: string) => void,
+): Promise<T> {
+  const messages = buildOpenAiMessages(opts);
+
+  const stream = await openAiClient.chat.completions.create({
+    model: openAiModelName,
     messages,
     temperature: opts.temperature ?? 0.4,
     response_format: { type: "json_object" },
@@ -168,7 +282,50 @@ export async function generateStreamJSON<T>(
     normalizeResult(parsed);
     return parsed as T;
   } catch (err) {
-    log("OpenAI returned invalid JSON (stream):", fullText);
+    log("openai returned invalid JSON (stream):", fullText);
+    throw new Error(`Failed to parse streamed JSON: ${(err as Error).message}`);
+  }
+}
+
+async function generateGeminiStreamJSON<T>(
+  opts: GenerateOptions,
+  onReplyChunk: (text: string) => void,
+): Promise<T> {
+  const model = geminiClient.getGenerativeModel({
+    model: geminiModelName,
+    systemInstruction: buildSystemContent(opts),
+  });
+
+  const stream = await model.generateContentStream({
+    contents: buildGeminiContents(opts),
+    generationConfig: {
+      temperature: opts.temperature ?? 0.4,
+      responseMimeType: "application/json",
+      responseSchema: toGeminiSchema(opts.jsonSchema),
+    },
+  });
+
+  let fullText = "";
+  const extractor = new ReplyExtractor();
+
+  for await (const chunk of stream.stream) {
+    const delta = chunk.text();
+    if (!delta) continue;
+    fullText += delta;
+
+    const replyChunk = extractor.feed(delta);
+    if (replyChunk) {
+      onReplyChunk(replyChunk);
+    }
+  }
+
+  log("LLM raw streamed response:", fullText);
+  try {
+    const parsed = JSON.parse(fullText);
+    normalizeResult(parsed);
+    return parsed as T;
+  } catch (err) {
+    log("gemini returned invalid JSON (stream):", fullText);
     throw new Error(`Failed to parse streamed JSON: ${(err as Error).message}`);
   }
 }

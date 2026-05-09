@@ -1,12 +1,12 @@
 # Agentic Marketplace API
 
-Backend + AI for an agentic marketplace. Sellers describe their item to a Gemini-powered seller agent; buyers describe what they want to a Gemini-powered buyer agent. When a buyer kicks off a search, two more Gemini agents (a seller-side negotiator and a buyer-side negotiator) haggle on each side's behalf — neither sees the other's reservation price — and a deal is booked when they meet in the middle.
+Backend + AI for an agentic marketplace. Sellers describe their item to an LLM-powered seller agent; buyers describe what they want to an LLM-powered buyer agent. When a buyer kicks off a search, two more agents (a seller-side negotiator and a buyer-side negotiator) haggle on each side's behalf — neither sees the other's reservation price — and a deal is booked when they meet in the middle.
 
 ## Stack
 
 - Express + TypeScript (`apps/api`)
 - Prisma + SQLite (`packages/db`)
-- Gemini via `@google/generative-ai`
+- OpenAI via `openai` or Gemini via `@google/generative-ai`
 - Async background jobs via in-process queue (Job rows persisted to DB)
 
 ## Setup
@@ -27,6 +27,8 @@ Backend + AI for an agentic marketplace. Sellers describe their item to a Gemini
    cd apps/api
    cp .env.example .env
    # edit .env:
+   #   LLM_PROVIDER=openai or gemini
+   #   OPENAI_API_KEY=...your key from https://platform.openai.com/api-keys
    #   GEMINI_API_KEY=...your key from https://aistudio.google.com/app/apikey
    #   DATABASE_URL=file:/absolute/path/to/repo/packages/db/prisma/dev.db
    ```
@@ -49,7 +51,7 @@ Backend + AI for an agentic marketplace. Sellers describe their item to a Gemini
 
 ```
 apps/api/src/
-  llm/gemini.ts           # Gemini wrapper (text + structured JSON output)
+  llm/gemini.ts           # LLM wrapper for OpenAI/Gemini (text + structured JSON output)
   agents/
     seller-onboarding.ts  # interviews seller → builds Listing draft
     buyer-onboarding.ts   # interviews buyer → builds BuyerSearch draft

@@ -11,11 +11,13 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  role      String   // "seller" | "buyer" | "both"
-  createdAt DateTime @default(now())
+  id              String    @id @default(uuid())
+  name            String
+  email           String    @unique
+  role            String    // "seller" | "buyer" | "both"
+  passwordHash    String?
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
 
   listings           Listing[]
   sellerConvs        SellerConversation[]
@@ -23,6 +25,41 @@ model User {
   buyerSearches      BuyerSearch[]
   dealsAsSeller      Deal[]               @relation("DealsAsSeller")
   dealsAsBuyer       Deal[]               @relation("DealsAsBuyer")
+  sessions           Session[]
+  emailTokens        EmailVerificationToken[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // A product the seller wants to sell. minPrice is the seller's hidden

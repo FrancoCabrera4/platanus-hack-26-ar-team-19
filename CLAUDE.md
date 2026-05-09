@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-Hackathon project (Platanus Hack 26, Buenos Aires, team-19, "Agentic Money" track): an **agentic marketplace** where Gemini-powered agents onboard sellers/buyers and then a separate pair of negotiator agents haggle on each side's behalf. The API is the substantive code; the Next.js web app is a near-empty scaffold.
+Hackathon project (Platanus Hack 26, Buenos Aires, team-19, "Agentic Money" track): an **agentic marketplace** where LLM-powered agents onboard sellers/buyers and then a separate pair of negotiator agents haggle on each side's behalf. The API is the substantive code; the Next.js web app is a near-empty scaffold.
 
 `apps/api/README.md` has the canonical end-to-end flow, REST contract, and curl walkthrough — read it first when working on backend changes.
 
@@ -44,7 +44,7 @@ There is no test runner configured. `@repo/db`'s `test` script is a placeholder 
 Two env files matter:
 
 - **Repo root `.env`**: only `DATABASE_URL=file:/dev.db` for Prisma codegen at the workspace root.
-- **`apps/api/.env`**: needs `GEMINI_API_KEY` and an absolute-path `DATABASE_URL`. The API server warns at startup if `GEMINI_API_KEY` is unset; agent endpoints will fail without it. The absolute path matters because the API process and the Prisma CLI run from different cwds — a relative `file:./dev.db` resolves differently in each.
+- **`apps/api/.env`**: needs `LLM_PROVIDER=openai|gemini`, the matching API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`), and an absolute-path `DATABASE_URL`. If `LLM_PROVIDER` is omitted, the API uses OpenAI when `OPENAI_API_KEY` is set and otherwise Gemini. The absolute path matters because the API process and the Prisma CLI run from different cwds — a relative `file:./dev.db` resolves differently in each.
 
 ```bash
 # In apps/api/.env, generate the absolute DB path with:
@@ -90,7 +90,7 @@ In-process, persisted via the `Job` table. `enqueueRunSearch` writes a `queued` 
 
 ### LLM access (`llm/gemini.ts`)
 
-All Gemini calls go through `generate()` / `generateJSON()`. Defaults: `gemini-2.0-flash`, temperature 0.7 for prose / 0.4 for JSON. `generateJSON` requires a `jsonSchema` and uses Gemini's `responseMimeType: "application/json"` mode. If you need a new agent, add it under `agents/` and call through this wrapper rather than instantiating a new client.
+All LLM calls go through `generate()` / `generateJSON()`. Set `LLM_PROVIDER=openai` or `LLM_PROVIDER=gemini`; if omitted, the API uses OpenAI when `OPENAI_API_KEY` is set and otherwise Gemini. Defaults: OpenAI `gpt-4o-mini`, Gemini `gemini-2.0-flash`, temperature 0.7 for prose / 0.4 for JSON. `generateJSON` requires a `jsonSchema`; the wrapper maps structured JSON mode for both providers. If you need a new agent, add it under `agents/` and call through this wrapper rather than instantiating a new client.
 
 ### Data model highlights (`packages/db/prisma/schema.prisma`)
 
