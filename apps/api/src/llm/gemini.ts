@@ -38,7 +38,8 @@ interface GenerateOptions {
 }
 
 function parseProvider(value: string | undefined): LlmProvider {
-  if (value === "gemini" || value === "openai") return value;
+  const normalised = value?.toLowerCase();
+  if (normalised === "gemini" || normalised === "openai") return normalised;
   if (value) {
     log(`WARN: Unsupported LLM_PROVIDER="${value}". Falling back to auto-detect.`);
   }

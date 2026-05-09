@@ -11,29 +11,47 @@ async function main() {
   const sellers = await Promise.all([
     prisma.user.upsert({
       where: { email: "ana@demo.dev" },
-      update: {},
-      create: { name: "Ana", email: "ana@demo.dev", role: "seller" },
+      update: { emailVerifiedAt: new Date() },
+      create: { name: "Ana", email: "ana@demo.dev", role: "seller", emailVerifiedAt: new Date() },
     }),
     prisma.user.upsert({
       where: { email: "bruno@demo.dev" },
-      update: {},
-      create: { name: "Bruno", email: "bruno@demo.dev", role: "seller" },
+      update: { emailVerifiedAt: new Date() },
+      create: { name: "Bruno", email: "bruno@demo.dev", role: "seller", emailVerifiedAt: new Date() },
     }),
     prisma.user.upsert({
       where: { email: "clara@demo.dev" },
-      update: {},
-      create: { name: "Clara", email: "clara@demo.dev", role: "seller" },
+      update: { emailVerifiedAt: new Date() },
+      create: { name: "Clara", email: "clara@demo.dev", role: "seller", emailVerifiedAt: new Date() },
     }),
   ]);
 
   const buyer = await prisma.user.upsert({
     where: { email: "diego@demo.dev" },
-    update: {},
-    create: { name: "Diego", email: "diego@demo.dev", role: "buyer" },
+      update: { emailVerifiedAt: new Date() },
+      create: { name: "Diego", email: "diego@demo.dev", role: "buyer", emailVerifiedAt: new Date() },
   });
 
-  // Wipe old demo listings & search to keep the seed idempotent.
-  await prisma.listing.deleteMany({ where: { sellerId: { in: sellers.map((s) => s.id) } } });
+  // Wipe old demo data. Delete in FK-safe order to avoid constraint errors.
+  const sellerIds = sellers.map((s) => s.id);
+  const oldListings = await prisma.listing.findMany({ where: { sellerId: { in: sellerIds } }, select: { id: true } });
+  const oldListingIds = oldListings.map((l) => l.id);
+  const oldSearches = await prisma.buyerSearch.findMany({ where: { buyerId: buyer.id }, select: { id: true } });
+  const oldSearchIds = oldSearches.map((s) => s.id);
+
+  if (oldListingIds.length > 0 || oldSearchIds.length > 0) {
+    await prisma.deal.deleteMany({
+      where: { OR: [{ listingId: { in: oldListingIds } }, { searchId: { in: oldSearchIds } }] },
+    });
+    await prisma.negotiationMessage.deleteMany({
+      where: { negotiation: { OR: [{ listingId: { in: oldListingIds } }, { searchId: { in: oldSearchIds } }] } },
+    });
+    await prisma.negotiation.deleteMany({
+      where: { OR: [{ listingId: { in: oldListingIds } }, { searchId: { in: oldSearchIds } }] },
+    });
+    await prisma.job.deleteMany({ where: { searchId: { in: oldSearchIds } } });
+  }
+  await prisma.listing.deleteMany({ where: { sellerId: { in: sellerIds } } });
   await prisma.buyerSearch.deleteMany({ where: { buyerId: buyer.id } });
 
   const [ana, bruno, clara] = sellers;

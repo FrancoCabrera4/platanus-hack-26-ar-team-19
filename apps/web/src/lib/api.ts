@@ -172,14 +172,7 @@ export async function streamMessage(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
+  function processLines(lines: string[]) {
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;
       try {
@@ -194,6 +187,23 @@ export async function streamMessage(
         // skip malformed lines
       }
     }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    processLines(lines);
+  }
+
+  // Process any remaining data left in the buffer after the stream closes.
+  // The server sends the final "done" event and calls res.end() immediately,
+  // so the last SSE event can arrive in the same chunk that closes the stream.
+  if (buffer.trim()) {
+    processLines(buffer.split("\n"));
   }
 }
 

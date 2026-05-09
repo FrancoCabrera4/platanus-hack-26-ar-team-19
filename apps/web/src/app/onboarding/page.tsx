@@ -22,6 +22,10 @@ export default function OnboardingPage() {
   const router = useRouter();
 
   function finishOnboarding() {
+    setStep("ready");
+  }
+
+  function goToExplore() {
     localStorage.setItem("am_onboarding_done", "1");
     localStorage.setItem("am_mp_connected", mpConnected ? "1" : "0");
     router.push("/explore");
@@ -178,13 +182,13 @@ export default function OnboardingPage() {
 
             <div className="space-y-3">
               <button
-                onClick={finishOnboarding}
+                onClick={goToExplore}
                 className="w-full h-11 bg-foreground text-background rounded-lg text-sm font-medium hover:bg-foreground/90 transition-colors"
               >
                 Explorar productos
               </button>
               <button
-                  onClick={finishOnboarding}
+                  onClick={goToExplore}
                 className="w-full h-11 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
               >
                 Hablar con mi agente
