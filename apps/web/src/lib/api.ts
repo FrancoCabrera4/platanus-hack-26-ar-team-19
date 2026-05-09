@@ -82,3 +82,95 @@ export async function streamMessage(
     }
   }
 }
+
+export type Listing = {
+  id: string;
+  sellerId: string;
+  title: string;
+  description: string;
+  category: string | null;
+  condition: string | null;
+  askPrice: number;
+  maxPrice: number | null;
+  status: string;
+  createdAt: string;
+};
+
+export type NegotiationSummary = {
+  id: string;
+  status: string;
+  finalPrice: number | null;
+  reason: string | null;
+  listing: { id: string; title: string; askPrice: number };
+};
+
+export type DealSummary = {
+  id: string;
+  listingId: string;
+  finalPrice: number;
+  createdAt: string;
+};
+
+export type SearchDetail = {
+  id: string;
+  query: string;
+  category: string | null;
+  minPrice: number | null;
+  maxPrice: number;
+  status: "collecting" | "ready" | "running" | "completed" | "failed";
+  negotiations: NegotiationSummary[];
+  deals: DealSummary[];
+  jobs: { id: string; status: string; error: string | null; createdAt: string }[];
+};
+
+export type NegotiationMessage = {
+  id: string;
+  side: "seller" | "buyer";
+  action: "offer" | "counter" | "accept" | "reject" | "open";
+  proposedPrice: number | null;
+  content: string;
+  createdAt: string;
+};
+
+export type NegotiationDetail = {
+  id: string;
+  status: string;
+  finalPrice: number | null;
+  reason: string | null;
+  listing: { id: string; title: string; askPrice: number };
+  messages: NegotiationMessage[];
+  deal: { id: string; finalPrice: number } | null;
+};
+
+export type JobDetail = {
+  id: string;
+  type: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  error: string | null;
+  result: unknown;
+};
+
+export async function listListings(limit = 40): Promise<Listing[]> {
+  const res = await fetch(`${API_URL}/listings?status=active`);
+  if (!res.ok) return [];
+  const all = (await res.json()) as Listing[];
+  return all.slice(0, limit);
+}
+
+export async function getSearch(id: string): Promise<SearchDetail> {
+  const res = await fetch(`${API_URL}/searches/${id}`);
+  if (!res.ok) throw new Error(`getSearch ${id} failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getNegotiation(id: string): Promise<NegotiationDetail> {
+  const res = await fetch(`${API_URL}/negotiations/${id}`);
+  if (!res.ok) throw new Error(`getNegotiation ${id} failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getJob(id: string): Promise<JobDetail> {
+  const res = await fetch(`${API_URL}/jobs/${id}`);
+  if (!res.ok) throw new Error(`getJob ${id} failed: ${res.status}`);
+  return res.json();
+}

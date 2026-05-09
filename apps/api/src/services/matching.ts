@@ -45,7 +45,7 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
 
   // 20% slack on max price — sellers may negotiate down.
   const ceiling = search.maxPrice * 1.2;
-  const candidates = await prisma.listing.findMany({
+  let candidates = await prisma.listing.findMany({
     where: {
       status: "active",
       askPrice: { lte: ceiling },
@@ -53,6 +53,17 @@ export async function findMatches(searchId: string, topN = 3): Promise<MatchCand
     },
     take: 25,
   });
+
+  // The buyer agent and the seed source don't share a category vocabulary
+  // (e.g. agent says "phones", seed says "electronics"). If the strict
+  // category filter wipes everything out, retry without it and let the
+  // Gemini scorer fall back on title/description.
+  if (candidates.length === 0 && search.category) {
+    candidates = await prisma.listing.findMany({
+      where: { status: "active", askPrice: { lte: ceiling } },
+      take: 25,
+    });
+  }
 
   if (candidates.length === 0) return [];
   if (candidates.length === 1) {

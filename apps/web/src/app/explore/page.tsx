@@ -1,35 +1,61 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   createUser,
+  listListings,
   startBuyerConversation,
   startSellerConversation,
   streamMessage,
+  type Listing,
 } from "@/lib/api";
 
-const LISTINGS = [
-  { id: 1, title: "Bicicleta Trek FX3", h: 280, color: "hsl(220 14% 90%)" },
-  { id: 2, title: "MacBook Air M2", h: 340, color: "hsl(220 14% 86%)" },
-  { id: 3, title: "Escritorio IKEA", h: 240, color: "hsl(220 14% 92%)" },
-  { id: 4, title: "iPhone 15 Pro", h: 320, color: "hsl(220 14% 88%)" },
-  { id: 5, title: "Silla Herman Miller", h: 360, color: "hsl(220 14% 84%)" },
-  { id: 6, title: "Monitor LG 27\"", h: 260, color: "hsl(220 14% 91%)" },
-  { id: 7, title: "Cámara Sony A7III", h: 300, color: "hsl(220 14% 87%)" },
-  { id: 8, title: "Teclado Keychron K2", h: 220, color: "hsl(220 14% 93%)" },
-  { id: 9, title: "Zapatillas Nike Air", h: 290, color: "hsl(220 14% 89%)" },
-  { id: 10, title: "Mochila Peak Design", h: 330, color: "hsl(220 14% 85%)" },
-  { id: 11, title: "Auriculares Sony WH", h: 250, color: "hsl(220 14% 90%)" },
-  { id: 12, title: "Kindle Paperwhite", h: 270, color: "hsl(220 14% 88%)" },
-  { id: 13, title: "Guitarra Fender", h: 350, color: "hsl(220 14% 86%)" },
-  { id: 14, title: "Patineta eléctrica", h: 230, color: "hsl(220 14% 92%)" },
-  { id: 15, title: "Lentes Ray-Ban", h: 200, color: "hsl(220 14% 91%)" },
-  { id: 16, title: "PS5 Digital", h: 310, color: "hsl(220 14% 87%)" },
-  { id: 17, title: "Mesa de ping pong", h: 280, color: "hsl(220 14% 89%)" },
-  { id: 18, title: "Drone DJI Mini 3", h: 340, color: "hsl(220 14% 85%)" },
-  { id: 19, title: "Reloj Casio Vintage", h: 210, color: "hsl(220 14% 93%)" },
-  { id: 20, title: "Parlante JBL", h: 260, color: "hsl(220 14% 90%)" },
+type Tile = {
+  id: string;
+  title: string;
+  askPrice?: number;
+  h: number;
+  color: string;
+};
+
+const FALLBACK_TILES: Tile[] = [
+  { id: "f1", title: "Bicicleta Trek FX3", h: 280, color: "hsl(220 14% 90%)" },
+  { id: "f2", title: "MacBook Air M2", h: 340, color: "hsl(220 14% 86%)" },
+  { id: "f3", title: "Escritorio IKEA", h: 240, color: "hsl(220 14% 92%)" },
+  { id: "f4", title: "iPhone 15 Pro", h: 320, color: "hsl(220 14% 88%)" },
+  { id: "f5", title: "Silla Herman Miller", h: 360, color: "hsl(220 14% 84%)" },
+  { id: "f6", title: "Monitor LG 27\"", h: 260, color: "hsl(220 14% 91%)" },
+  { id: "f7", title: "Cámara Sony A7III", h: 300, color: "hsl(220 14% 87%)" },
+  { id: "f8", title: "Teclado Keychron K2", h: 220, color: "hsl(220 14% 93%)" },
+  { id: "f9", title: "Zapatillas Nike Air", h: 290, color: "hsl(220 14% 89%)" },
+  { id: "f10", title: "Mochila Peak Design", h: 330, color: "hsl(220 14% 85%)" },
+  { id: "f11", title: "Auriculares Sony WH", h: 250, color: "hsl(220 14% 90%)" },
+  { id: "f12", title: "Kindle Paperwhite", h: 270, color: "hsl(220 14% 88%)" },
 ];
+
+const TILE_HEIGHTS = [200, 220, 240, 260, 280, 300, 320, 340, 360];
+const TILE_COLORS = [
+  "hsl(220 14% 84%)",
+  "hsl(220 14% 86%)",
+  "hsl(220 14% 88%)",
+  "hsl(220 14% 90%)",
+  "hsl(220 14% 92%)",
+];
+
+function listingsToTiles(listings: Listing[]): Tile[] {
+  return listings.map((l, i) => ({
+    id: l.id,
+    title: l.title,
+    askPrice: l.askPrice,
+    h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
+    color: TILE_COLORS[i % TILE_COLORS.length]!,
+  }));
+}
+
+function formatARS(n: number): string {
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n);
+}
 
 const SELL_KEYWORDS = ["vender", "vendo", "publicar", "listar", "tengo para vender", "quiero vender"];
 
@@ -41,12 +67,14 @@ type Message = {
 type ChatMode = "idle" | "buyer" | "seller";
 
 export default function ExplorePage() {
+  const router = useRouter();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [chatMode, setChatMode] = useState<ChatMode>("idle");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [tiles, setTiles] = useState<Tile[]>(FALLBACK_TILES);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatOpen = messages.length > 0;
@@ -54,6 +82,16 @@ export default function ExplorePage() {
   useEffect(() => {
     const stored = localStorage.getItem("am_user_id");
     if (stored) setUserId(stored);
+  }, []);
+
+  useEffect(() => {
+    listListings(40)
+      .then((listings) => {
+        if (listings.length > 0) setTiles(listingsToTiles(listings));
+      })
+      .catch(() => {
+        // keep fallback tiles
+      });
   }, []);
 
   useEffect(() => {
@@ -116,6 +154,7 @@ export default function ExplorePage() {
         convId = conv.id;
         setConversationId(conv.id);
       }
+      if (!convId) throw new Error("No se pudo iniciar la conversación.");
 
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
@@ -124,7 +163,13 @@ export default function ExplorePage() {
         convId,
         text,
         (chunk) => appendToLastAssistant(chunk),
-        () => {},
+        (data) => {
+          if (data.searchId) {
+            router.push(`/search/${data.searchId}`);
+          } else if (data.listingId) {
+            appendToLastAssistant(`\n\n✓ Tu publicación está lista (id: ${data.listingId.slice(0, 8)}…).`);
+          }
+        },
         (error) => {
           setMessages((prev) => {
             const copy = [...prev];
@@ -174,15 +219,18 @@ export default function ExplorePage() {
       </header>
 
       <div className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28">
-        {LISTINGS.map((item) => (
+        {tiles.map((item) => (
           <div key={item.id} className="mb-3 break-inside-avoid cursor-pointer group">
             <div
               className="rounded-xl overflow-hidden"
               style={{ height: item.h, backgroundColor: item.color }}
             />
-            <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors">
+            <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
               {item.title}
             </p>
+            {item.askPrice != null && (
+              <p className="text-xs text-foreground/80 px-0.5 font-medium">{formatARS(item.askPrice)}</p>
+            )}
           </div>
         ))}
       </div>

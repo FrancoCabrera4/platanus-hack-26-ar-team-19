@@ -6,6 +6,7 @@ import {
   type SellerListingDraft,
 } from "../agents/seller-onboarding";
 import type { ChatTurn } from "../llm/gemini";
+import { sseHeaders, sseSend, streamWords, asyncHandler } from "./_sse";
 
 export const sellersRouter: RouterType = Router();
 
@@ -14,7 +15,7 @@ const StartConversation = z.object({
 });
 
 // POST /sellers/conversations  — start a new onboarding chat (greeting only)
-sellersRouter.post("/conversations", async (req, res) => {
+sellersRouter.post("/conversations", asyncHandler(async (req, res) => {
   const parsed = StartConversation.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -42,12 +43,12 @@ sellersRouter.post("/conversations", async (req, res) => {
     done: turn.done,
     messages: conv.messages,
   });
-});
+}));
 
 const PostMessage = z.object({ content: z.string().min(1) });
 
 // POST /sellers/conversations/:id/messages — user sends a message, get assistant reply
-sellersRouter.post("/conversations/:id/messages", async (req, res) => {
+sellersRouter.post("/conversations/:id/messages", asyncHandler(async (req, res) => {
   const parsed = PostMessage.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -116,10 +117,86 @@ sellersRouter.post("/conversations/:id/messages", async (req, res) => {
     done: turn.done,
     listingId,
   });
-});
+}));
+
+// POST /sellers/conversations/:id/messages/stream — same as /messages but SSE.
+sellersRouter.post("/conversations/:id/messages/stream", asyncHandler(async (req, res) => {
+  const parsed = PostMessage.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const conv = await prisma.sellerConversation.findUnique({
+    where: { id: req.params.id },
+    include: { messages: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!conv) return res.status(404).json({ error: "conversation not found" });
+  if (conv.status === "completed") {
+    return res.status(409).json({ error: "conversation already completed" });
+  }
+
+  sseHeaders(res);
+
+  try {
+    await prisma.conversationMessage.create({
+      data: { sellerConvId: conv.id, role: "user", content: parsed.data.content },
+    });
+
+    const history: ChatTurn[] = [
+      ...conv.messages.map((m) => ({ role: m.role as ChatTurn["role"], content: m.content })),
+      { role: "user", content: parsed.data.content },
+    ];
+    const state = JSON.parse(conv.state) as SellerListingDraft;
+
+    const turn = await runSellerOnboardingTurn(history, state);
+    const merged: SellerListingDraft = { ...state, ...turn.state };
+
+    await prisma.conversationMessage.create({
+      data: { sellerConvId: conv.id, role: "assistant", content: turn.reply },
+    });
+
+    await streamWords(res, turn.reply);
+
+    let listingId: string | undefined;
+
+    if (turn.done && merged.title && merged.description && merged.askPrice && merged.minPrice) {
+      const listing = await prisma.listing.create({
+        data: {
+          sellerId: conv.sellerId,
+          title: merged.title,
+          description: merged.description,
+          category: merged.category ?? null,
+          condition: merged.condition ?? null,
+          askPrice: merged.askPrice,
+          minPrice: merged.minPrice,
+          maxPrice: merged.maxPrice ?? null,
+          strategyNotes: merged.strategyNotes ?? null,
+        },
+      });
+      await prisma.sellerConversation.update({
+        where: { id: conv.id },
+        data: {
+          status: "completed",
+          listingId: listing.id,
+          state: JSON.stringify(merged),
+        },
+      });
+      listingId = listing.id;
+    } else {
+      await prisma.sellerConversation.update({
+        where: { id: conv.id },
+        data: { state: JSON.stringify(merged) },
+      });
+    }
+
+    sseSend(res, { done: true, state: merged, listingId });
+    res.end();
+  } catch (err) {
+    sseSend(res, { error: (err as Error).message });
+    res.end();
+  }
+}));
 
 // GET /sellers/conversations/:id
-sellersRouter.get("/conversations/:id", async (req, res) => {
+sellersRouter.get("/conversations/:id", asyncHandler(async (req, res) => {
   const conv = await prisma.sellerConversation.findUnique({
     where: { id: req.params.id },
     include: { messages: { orderBy: { createdAt: "asc" } }, listing: true },
@@ -129,4 +206,4 @@ sellersRouter.get("/conversations/:id", async (req, res) => {
     ...conv,
     state: JSON.parse(conv.state),
   });
-});
+}));

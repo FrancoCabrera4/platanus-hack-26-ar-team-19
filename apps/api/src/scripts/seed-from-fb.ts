@@ -64,15 +64,28 @@ async function ensureSellerPool() {
   return created;
 }
 
+// Detect "$14.000" or "USD 1,200" style strings — for some FB cards the parser
+// reads the price into `title` and the real product name into `location`.
+const PRICE_LIKE = /^\s*(US\$|U\$S|USD|ARS|\$)?\s*[\d.,]+\s*$/i;
+
 function deriveListingFields(item: ScrapedListing) {
   const askPrice = item.price ?? 0;
   // Heuristic reservation prices since the scrape doesn't expose them.
   const minPrice = Math.round(askPrice * 0.8);
   const maxPrice = Math.round(askPrice * 1.15);
-  const description = [item.title, item.location ? `Ubicación: ${item.location}` : null, `Fuente: Facebook Marketplace (${item.url})`]
+
+  // Recover from the title/location swap in the raw scrape.
+  let title = item.title;
+  let location = item.location;
+  if (PRICE_LIKE.test(title) && location && !PRICE_LIKE.test(location)) {
+    title = location;
+    location = null;
+  }
+
+  const description = [title, location ? `Ubicación: ${location}` : null, `Fuente: Facebook Marketplace (${item.url})`]
     .filter(Boolean)
     .join("\n");
-  return { askPrice, minPrice, maxPrice, description };
+  return { askPrice, minPrice, maxPrice, description, title };
 }
 
 async function main() {
@@ -91,10 +104,10 @@ async function main() {
 
   const rows = valid.map((item, i) => {
     const seller = sellers[i % sellers.length]!;
-    const { askPrice, minPrice, maxPrice, description } = deriveListingFields(item);
+    const { askPrice, minPrice, maxPrice, description, title } = deriveListingFields(item);
     return {
       sellerId: seller.id,
-      title: item.title.slice(0, 200),
+      title: title.slice(0, 200),
       description,
       category: item.category,
       condition: null,

@@ -6,13 +6,15 @@ import {
   type BuyerSearchDraft,
 } from "../agents/buyer-onboarding";
 import type { ChatTurn } from "../llm/gemini";
+import { enqueueRunSearch } from "../jobs/runner";
+import { sseHeaders, sseSend, streamWords, asyncHandler } from "./_sse";
 
 export const buyersRouter: RouterType = Router();
 
 const StartConversation = z.object({ buyerId: z.string().uuid() });
 
 // POST /buyers/conversations  — start a new onboarding chat
-buyersRouter.post("/conversations", async (req, res) => {
+buyersRouter.post("/conversations", asyncHandler(async (req, res) => {
   const parsed = StartConversation.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -39,12 +41,12 @@ buyersRouter.post("/conversations", async (req, res) => {
     done: turn.done,
     messages: conv.messages,
   });
-});
+}));
 
 const PostMessage = z.object({ content: z.string().min(1) });
 
 // POST /buyers/conversations/:id/messages
-buyersRouter.post("/conversations/:id/messages", async (req, res) => {
+buyersRouter.post("/conversations/:id/messages", asyncHandler(async (req, res) => {
   const parsed = PostMessage.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -111,14 +113,94 @@ buyersRouter.post("/conversations/:id/messages", async (req, res) => {
     done: turn.done,
     searchId,
   });
-});
+}));
+
+// POST /buyers/conversations/:id/messages/stream — same as /messages but SSE.
+// On completion: auto-creates BuyerSearch and auto-enqueues the match+negotiate job.
+buyersRouter.post("/conversations/:id/messages/stream", asyncHandler(async (req, res) => {
+  const parsed = PostMessage.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const conv = await prisma.buyerConversation.findUnique({
+    where: { id: req.params.id },
+    include: { messages: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!conv) return res.status(404).json({ error: "conversation not found" });
+  if (conv.status === "completed") {
+    return res.status(409).json({ error: "conversation already completed" });
+  }
+
+  sseHeaders(res);
+
+  try {
+    await prisma.conversationMessage.create({
+      data: { buyerConvId: conv.id, role: "user", content: parsed.data.content },
+    });
+
+    const history: ChatTurn[] = [
+      ...conv.messages.map((m) => ({ role: m.role as ChatTurn["role"], content: m.content })),
+      { role: "user", content: parsed.data.content },
+    ];
+    const state = JSON.parse(conv.state) as BuyerSearchDraft;
+
+    const turn = await runBuyerOnboardingTurn(history, state);
+    const merged: BuyerSearchDraft = { ...state, ...turn.state };
+
+    await prisma.conversationMessage.create({
+      data: { buyerConvId: conv.id, role: "assistant", content: turn.reply },
+    });
+
+    await streamWords(res, turn.reply);
+
+    let searchId: string | undefined;
+    let jobId: string | undefined;
+
+    if (turn.done && merged.query && merged.maxPrice) {
+      const search = await prisma.buyerSearch.create({
+        data: {
+          buyerId: conv.buyerId,
+          query: merged.query,
+          requirements: merged.requirements ?? null,
+          category: merged.category ?? null,
+          minPrice: merged.minPrice ?? null,
+          maxPrice: merged.maxPrice,
+          timeBudgetSeconds: merged.timeBudgetSeconds ?? 120,
+          status: "ready",
+        },
+      });
+      await prisma.buyerConversation.update({
+        where: { id: conv.id },
+        data: {
+          status: "completed",
+          searchId: search.id,
+          state: JSON.stringify(merged),
+        },
+      });
+      searchId = search.id;
+      // Auto-trigger the match + negotiate pipeline so the buyer doesn't have to
+      // hit a second endpoint. The frontend gets the jobId in the done event.
+      jobId = await enqueueRunSearch({ searchId: search.id });
+    } else {
+      await prisma.buyerConversation.update({
+        where: { id: conv.id },
+        data: { state: JSON.stringify(merged) },
+      });
+    }
+
+    sseSend(res, { done: true, state: merged, searchId, jobId });
+    res.end();
+  } catch (err) {
+    sseSend(res, { error: (err as Error).message });
+    res.end();
+  }
+}));
 
 // GET /buyers/conversations/:id
-buyersRouter.get("/conversations/:id", async (req, res) => {
+buyersRouter.get("/conversations/:id", asyncHandler(async (req, res) => {
   const conv = await prisma.buyerConversation.findUnique({
     where: { id: req.params.id },
     include: { messages: { orderBy: { createdAt: "asc" } }, search: true },
   });
   if (!conv) return res.status(404).json({ error: "conversation not found" });
   return res.json({ ...conv, state: JSON.parse(conv.state) });
-});
+}));
