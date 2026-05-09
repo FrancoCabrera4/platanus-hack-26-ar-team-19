@@ -37,6 +37,7 @@ interface ProductCandidate {
 
 const DEFAULT_MIN_VECTOR_SIMILARITY = 0.3;
 const DEFAULT_MIN_LLM_MATCH_SCORE = 0.5;
+<<<<<<< HEAD
 const MAX_CANDIDATES = 25;
 const FALLBACK_VECTOR_CANDIDATES = 10;
 const STOP_WORDS = new Set([
@@ -52,6 +53,8 @@ const STOP_WORDS = new Set([
   "una",
   "uno",
 ]);
+=======
+>>>>>>> UriGandel
 
 function minVectorSimilarity(): number {
   const configured = Number.parseFloat(process.env.MIN_MATCH_SIMILARITY ?? "");
@@ -185,7 +188,11 @@ export async function findMatches(
 
   const validIds = new Set(candidates.map((c) => c.id));
   const minScore = minLlmMatchScore();
+<<<<<<< HEAD
   let textRanked = scored.matches
+=======
+  return scored.matches
+>>>>>>> UriGandel
     .filter((m) => validIds.has(m.productId))
     .filter((m) => m.score >= minScore)
     .sort((a, b) => b.score - a.score)

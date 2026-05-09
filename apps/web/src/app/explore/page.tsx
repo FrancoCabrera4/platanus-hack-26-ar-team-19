@@ -230,9 +230,16 @@ export default function ExplorePage() {
           if (reportedNegotiationStates.get(neg.id) !== stateKey) {
             reportedNegotiationStates.set(neg.id, stateKey);
             if (neg.status === "accepted" && neg.finalPrice != null) {
+<<<<<<< HEAD
               setSearchStatus(`Trato cerrado: "${product.title}" a ${formatARS(neg.finalPrice)}`);
             } else if (neg.status === "awaiting_buyer") {
               setSearchStatus(`Acuerdo pendiente: "${product.title}" a ${formatARS(neg.finalPrice ?? 0)}`);
+=======
+              const finalPrice = neg.finalPrice;
+              setMessages((prev) => [...prev, { role: "assistant", content: `Encontré "${product.title}" y cerré la negociación a ${formatARS(finalPrice)}` }]);
+            } else if (neg.status === "awaiting_buyer") {
+              // El modal se abre automáticamente vía useEffect que observa searchTiles.
+>>>>>>> UriGandel
             } else if (neg.status === "rejected" || neg.status === "timed_out" || neg.status === "error") {
               setSearchStatus(`"${product.title}" — sin acuerdo, buscando más...`);
             } else if (neg.status === "running") {

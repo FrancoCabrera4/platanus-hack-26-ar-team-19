@@ -5,7 +5,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   acceptNegotiation,
+<<<<<<< HEAD
   ApiError,
+=======
+>>>>>>> UriGandel
   getNegotiation,
   getProduct,
   getSearch,
@@ -52,19 +55,30 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const stoppedRef = useRef(false);
 
+<<<<<<< HEAD
   const refetch = useCallback(async () => {
+=======
+  const refresh = async () => {
+>>>>>>> UriGandel
     try {
       const s = await getSearch(searchId);
       setSearch(s);
       if (s.status === "completed" || s.status === "failed") {
         stoppedRef.current = true;
       }
+<<<<<<< HEAD
       return s;
     } catch (e) {
       setError((e as Error).message);
       return null;
     }
   }, [searchId]);
+=======
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+>>>>>>> UriGandel
 
   useEffect(() => {
     let cancelled = false;
@@ -162,9 +176,13 @@ export default function SearchPage() {
                   key={n.id}
                   summary={n}
                   maxPrice={search.maxPrice}
+<<<<<<< HEAD
                   onAfterAction={() => {
                     void refetch();
                   }}
+=======
+                  onAfterAction={refresh}
+>>>>>>> UriGandel
                 />
               ))}
             </div>
@@ -239,12 +257,17 @@ function NegotiationCard({
 }: {
   summary: SearchDetail["negotiations"][number];
   maxPrice: number;
+<<<<<<< HEAD
   onAfterAction: () => void;
+=======
+  onAfterAction: () => Promise<void>;
+>>>>>>> UriGandel
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"product" | "chat">("product");
   const [detail, setDetail] = useState<NegotiationDetail | null>(null);
   const [loading, setLoading] = useState(false);
+<<<<<<< HEAD
   const [product, setProduct] = useState<Product | null>(null);
   const [productLoading, setProductLoading] = useState(false);
   const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
@@ -254,29 +277,52 @@ function NegotiationCard({
 
   const handleAccept = async () => {
     if (!canAccept || actionState !== "idle") return;
+=======
+  const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const status = NEG_STATUS_COPY[summary.status] ?? NEG_STATUS_COPY.pending;
+  const awaitingBuyer = summary.status === "awaiting_buyer";
+
+  const handleAccept = async () => {
+>>>>>>> UriGandel
     setActionError(null);
     setActionState("accepting");
     try {
       await acceptNegotiation(summary.id);
+<<<<<<< HEAD
       onAfterAction();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "error";
       setActionError(ACCEPT_ERROR_COPY[code] ?? "No se pudo confirmar la negociación.");
+=======
+      await onAfterAction();
+    } catch (e) {
+      setActionError((e as Error).message);
+>>>>>>> UriGandel
     } finally {
       setActionState("idle");
     }
   };
 
   const handleReject = async () => {
+<<<<<<< HEAD
     if (!canAccept || actionState !== "idle") return;
+=======
+>>>>>>> UriGandel
     setActionError(null);
     setActionState("rejecting");
     try {
       await rejectNegotiation(summary.id);
+<<<<<<< HEAD
       onAfterAction();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "error";
       setActionError(ACCEPT_ERROR_COPY[code] ?? "No se pudo rechazar la negociación.");
+=======
+      await onAfterAction();
+    } catch (e) {
+      setActionError((e as Error).message);
+>>>>>>> UriGandel
     } finally {
       setActionState("idle");
     }
@@ -361,11 +407,85 @@ function NegotiationCard({
         </div>
       </button>
 
+<<<<<<< HEAD
       {canAccept && summary.finalPrice != null && (
+=======
+      {awaitingBuyer && summary.finalPrice != null && (
+>>>>>>> UriGandel
         <div className="border-t border-amber-200 bg-amber-50/70 px-4 py-3">
           <p className="text-sm text-amber-900">
             Los agentes acordaron <span className="font-semibold">{formatARS(summary.finalPrice)}</span>{" "}
             para <span className="font-medium">{summary.product.title}</span>. ¿Querés cerrar el trato?
+<<<<<<< HEAD
+=======
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={handleAccept}
+              disabled={actionState !== "idle"}
+              className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {actionState === "accepting" ? "Cerrando…" : "Aceptar"}
+            </button>
+            <button
+              type="button"
+              onClick={handleReject}
+              disabled={actionState !== "idle"}
+              className="inline-flex items-center justify-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+            >
+              {actionState === "rejecting" ? "Rechazando…" : "No aceptar"}
+            </button>
+          </div>
+          {actionError && (
+            <p className="mt-2 text-xs text-rose-700">No pudimos guardar tu respuesta: {actionError}</p>
+          )}
+        </div>
+      )}
+
+      {open && (
+        <div className="border-t border-black/5 bg-zinc-50/50 px-4 py-3">
+          {loading && !detail ? (
+            <div className="space-y-2">
+              <div className="h-3 w-2/3 rounded bg-zinc-200 animate-pulse" />
+              <div className="h-3 w-1/2 rounded bg-zinc-100 animate-pulse" />
+            </div>
+          ) : detail && detail.messages.length > 0 ? (
+            <div className="space-y-3">
+              {detail.messages.map((m) => (
+                <div key={m.id} className={`flex ${m.side === "buyer" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={`max-w-[78%] rounded-2xl px-3 py-2 ${
+                      m.side === "buyer"
+                        ? "bg-foreground text-background rounded-br-md"
+                        : "bg-white border border-black/10 rounded-bl-md"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide opacity-70">
+                      <span>{m.side === "buyer" ? "comprador" : "vendedor"}</span>
+                      <span>·</span>
+                      <span>{m.action}</span>
+                      {m.proposedPrice != null && (
+                        <>
+                          <span>·</span>
+                          <span className="font-medium">{formatARS(m.proposedPrice)}</span>
+                        </>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-sm leading-snug">{m.content}</p>
+                  </div>
+                </div>
+              ))}
+              {detail.reason && (
+                <p className="pt-1 text-xs italic text-muted-foreground">Motivo: {detail.reason}</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Esperando primer turno…</p>
+          )}
+          <p className="mt-3 text-[10px] text-muted-foreground">
+            Tope del comprador: {formatARS(maxPrice)} (privado para el vendedor)
+>>>>>>> UriGandel
           </p>
           <div className="mt-3 flex gap-2">
             <button

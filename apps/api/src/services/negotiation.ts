@@ -186,7 +186,11 @@ export async function runNegotiation(searchId: string, productId: string): Promi
   }
 
   // If the agents reached an agreement, run the safety checks but stop short of
+<<<<<<< HEAD
   // marking the product as sold. The human buyer still has to confirm the deal.
+=======
+  // marking the product as sold — the human buyer still has to confirm the deal.
+>>>>>>> UriGandel
   if (result.status === "awaiting_buyer" && result.finalPrice != null) {
     const fresh = await prisma.product.findUnique({ where: { id: productId } });
     if (!fresh || fresh.status !== "active") {

@@ -272,10 +272,15 @@ export async function getNegotiation(id: string): Promise<NegotiationDetail> {
   return apiFetch<NegotiationDetail>(`/negotiations/${id}`);
 }
 
+<<<<<<< HEAD
 export async function acceptNegotiation(id: string): Promise<NegotiationDetail> {
   return apiFetch<NegotiationDetail>(`/negotiations/${id}/accept`, {
     method: "POST",
   });
+=======
+export async function acceptNegotiation(id: string): Promise<NegotiationSummary> {
+  return apiFetch<NegotiationSummary>(`/negotiations/${id}/accept`, { method: "POST" });
+>>>>>>> UriGandel
 }
 
 export async function rejectNegotiation(id: string): Promise<NegotiationSummary> {
