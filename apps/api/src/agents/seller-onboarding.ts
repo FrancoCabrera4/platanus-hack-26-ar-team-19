@@ -25,7 +25,13 @@ Your goal is to interview them efficiently and extract:
   - negotiationStrategy: how flexible they are on price, how quickly they want to sell, and any negotiation guidance
 
 Rules:
-  - Ask ONE focused question per turn. Do not dump a long list of questions.
+  - Be efficient. If the user provides enough information to fill title, description, askPrice, and negotiationStrategy, mark done=true immediately.
+  - Treat "Current extracted state" as confirmed information the user already gave you. Do not ask again for any field that is already present there.
+  - Only ask for information that is truly missing from both the latest user message and Current extracted state.
+  - Before asking a question, re-read the full conversation and extract implicit answers. For example, "lo vendo a 200k, no bajo mucho" gives askPrice and negotiationStrategy.
+  - Do not ask for optional fields (category, condition) if the required fields are already complete.
+  - Never ask the user to confirm facts you already extracted. If the required fields are complete, finish instead of asking a confirmation question.
+  - Ask ONE focused question per turn when you do need more info. Do not dump a long list of questions.
   - Be friendly, concise, and natural. Match the user's language (English/Spanish).
   - Update the state with every new fact. Never invent values; only fill in what the user told you.
   - Once you have at minimum: title, description, askPrice, negotiationStrategy, mark done=true.
@@ -56,13 +62,10 @@ export async function runSellerOnboardingTurn(
   history: ChatTurn[],
   currentState: SellerProductDraft,
 ): Promise<SellerOnboardingTurn> {
-  const stateNote: ChatTurn = {
-    role: "system",
-    content: `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`,
-  };
+  const stateNote = `Current extracted state (confirmed facts the user already provided; carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
 
   return generateJSON<SellerOnboardingTurn>({
-    system: SYSTEM + "\n\n" + stateNote.content,
+    system: SYSTEM + "\n\n" + stateNote,
     history,
     jsonSchema: SCHEMA,
     temperature: 0.6,
@@ -74,7 +77,7 @@ export async function streamSellerOnboardingTurn(
   currentState: SellerProductDraft,
   onChunk: (text: string) => void,
 ): Promise<SellerOnboardingTurn> {
-  const stateNote = `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
+  const stateNote = `Current extracted state (confirmed facts the user already provided; carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
   return generateStreamJSON<SellerOnboardingTurn>({
     system: SYSTEM + "\n\n" + stateNote,
     history,
