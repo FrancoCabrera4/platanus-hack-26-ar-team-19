@@ -124,6 +124,7 @@ export async function streamMessage(
   onChunk: (text: string) => void,
   onDone: (data: { state: unknown; searchId?: string; productId?: string; jobId?: string }) => void,
   onError: (error: string) => void,
+  signal?: AbortSignal,
 ) {
   const res = await fetch(
     `${API_URL}/conversations/${conversationId}/messages/stream`,
@@ -132,6 +133,7 @@ export async function streamMessage(
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
+      signal,
     },
   );
 
@@ -263,4 +265,44 @@ export async function getNegotiation(id: string): Promise<NegotiationDetail> {
 
 export async function getJob(id: string): Promise<JobDetail> {
   return apiFetch<JobDetail>(`/jobs/${id}`);
+}
+
+// --- Image upload ---
+// Backend endpoint: POST /uploads/image (requireAuth, multipart/form-data)
+// Expected: FormData with field "image" (File)
+// Returns: { url: string } — the public URL of the uploaded image.
+// TODO: backend needs to add this endpoint. Example handler:
+//   1. Accept multipart via multer
+//   2. Save file to /public/uploads/ or an S3 bucket
+//   3. Return { url: "/uploads/<filename>" } or full S3 URL
+export async function uploadImage(file: File): Promise<{ url: string }> {
+  const form = new FormData();
+  form.append("image", file);
+  const res = await fetch(`${API_URL}/uploads/image`, {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (!res.ok) throw new Error("Upload failed");
+  return res.json();
+}
+
+// --- Audio transcription (Whisper) ---
+export async function transcribeAudio(audioBlob: Blob): Promise<string> {
+  const form = new FormData();
+  form.append("file", audioBlob, "audio.webm");
+  form.append("model", "whisper-1");
+  form.append("language", "es");
+
+  const key = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+  if (!key) throw new Error("Missing NEXT_PUBLIC_OPENAI_API_KEY");
+
+  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  if (!res.ok) throw new Error("Transcription failed");
+  const data = await res.json();
+  return data.text;
 }
