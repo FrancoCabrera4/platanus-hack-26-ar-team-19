@@ -1,6 +1,6 @@
 /**
  * Read the latest data/fb-marketplace-*.json and import its listings into
- * the SQLite DB so the demo has a populated catalog. Idempotent: prior
+ * the Postgres DB so the demo has a populated catalog. Idempotent: prior
  * fb-sourced sellers + listings are wiped before insert.
  *
  * Usage:
@@ -33,6 +33,7 @@ type ScrapeFile = {
 const DATA_DIR = path.resolve(__dirname, "..", "..", "data");
 const FB_SELLER_DOMAIN = "fb-seller.demo";
 const SELLER_POOL_SIZE = 12;
+const SEED_MULTIPLIER = 10;
 
 function pickInputFile(): string {
   const arg = process.argv[2];
@@ -94,6 +95,7 @@ async function main() {
   const payload = JSON.parse(fs.readFileSync(file, "utf-8")) as ScrapeFile;
   const valid = payload.listings.filter((l) => l.price !== null && l.price > 0 && l.title.length > 2);
   console.log(`[seed:fb] ${valid.length}/${payload.listings.length} listings con precio válido`);
+  console.log(`[seed:fb] multiplicador de seed: x${SEED_MULTIPLIER} (${valid.length} -> ${valid.length * SEED_MULTIPLIER})`);
 
   const sellers = await ensureSellerPool();
   const sellerIds = sellers.map((s) => s.id);
@@ -102,7 +104,8 @@ async function main() {
   const wiped = await prisma.listing.deleteMany({ where: { sellerId: { in: sellerIds } } });
   console.log(`[seed:fb] borrados ${wiped.count} listings previos`);
 
-  const rows = valid.map((item, i) => {
+  const seedItems = Array.from({ length: SEED_MULTIPLIER }, () => valid).flat();
+  const rows = seedItems.map((item, i) => {
     const seller = sellers[i % sellers.length]!;
     const { askPrice, minPrice, maxPrice, description, title } = deriveListingFields(item);
     return {
