@@ -242,7 +242,12 @@ export default function ExplorePage() {
           if (accepted?.finalPrice != null) {
             setSearchStatus(`Listo! Negociación cerrada a ${formatARS(accepted.finalPrice)}`);
           } else if (search.negotiations.length === 0) {
-            setSearchStatus("No encontré productos. Probá otra búsqueda.");
+            setSearchTiles([]);
+            setChatCollapsed(false);
+            setMessages((prev) => [...prev, { role: "assistant", content: "No encontré productos que coincidan con lo que buscás. Probá con otra búsqueda o cambiá los filtros." }]);
+            window.history.replaceState({}, "", "/explore");
+            setSearchStatus("");
+            return;
           } else {
             setSearchStatus("Búsqueda finalizada");
           }
@@ -306,9 +311,9 @@ export default function ExplorePage() {
     });
   }, []);
 
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    const text = input.trim();
+  async function handleSend(e?: React.FormEvent, overrideText?: string) {
+    e?.preventDefault();
+    const text = (overrideText ?? input).trim();
     if (!text || streaming) return;
 
     const msgImagePreview = imagePreview ?? undefined;
@@ -351,7 +356,9 @@ export default function ExplorePage() {
         text,
         (chunk) => appendToLastAssistant(chunk),
         (data) => {
-          if (data.suggestions?.length) setSuggestions(data.suggestions);
+          if (mode === "posting_product" && data.suggestions?.length) {
+            setSuggestions(data.suggestions);
+          }
           if (data.searchId) {
             setChatCollapsed(true);
             window.history.replaceState({}, "", `/explore?id=${data.searchId}`);
@@ -962,18 +969,17 @@ export default function ExplorePage() {
                     )}
                   </div>
                 ))}
-                {suggestions.length > 0 && !streaming && (
-                  <div className="flex flex-wrap gap-2 animate-msg-in">
+                {suggestions.length > 0 && !streaming && chatMode === "posting_product" && (
+                  <div className="flex flex-wrap gap-2 animate-msg-in pt-1">
                     {suggestions.map((s, i) => (
                       <button
                         key={i}
                         type="button"
                         onClick={() => {
-                          setInput(s);
                           setSuggestions([]);
-                          setTimeout(() => textareaRef.current?.focus(), 0);
+                          handleSend(undefined, s);
                         }}
-                        className="px-3 py-1.5 text-xs rounded-full border border-primary/30 text-primary hover:bg-primary/10 transition-colors"
+                        className="px-3 py-1.5 text-xs rounded-full bg-foreground/10 text-foreground hover:bg-foreground/20 transition-colors font-medium"
                       >
                         {s}
                       </button>

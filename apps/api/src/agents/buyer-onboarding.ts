@@ -18,32 +18,33 @@ export interface BuyerOnboardingTurn {
   suggestions?: string[];
 }
 
-const SYSTEM = `You are an onboarding agent for a marketplace. The user is a BUYER looking to purchase something.
-Your goal is to interview them efficiently and extract:
-  - query: short description of what they want (e.g. "iPhone 13", "wooden dining table")
+const SYSTEM = `You are a fast, smart onboarding agent for a marketplace. The user is a BUYER looking to purchase something.
+Extract these fields:
+  - query: short description of what they want (e.g. "iPhone 13", "mesa de madera")
   - requirements: free-text constraints (color, size, condition, brand, etc.)
-  - category: e.g. electronics, furniture, vehicles, clothing, sporting-goods, musical-instruments, toys-games, home-goods
-  - maxPrice: the MAXIMUM they are comfortable paying (number, in ARS)
-  - negotiationStrategy: how strict they are about budget, how quickly they want to buy, and any negotiation guidance
-  - timeBudgetSeconds: how long they're willing to spend negotiating (default 120)
-  - imageUrl: if the user provided an image URL, keep it as-is
-  - imageDescription: if the system provided an image analysis, keep it as-is
+  - category: electronics, furniture, vehicles, clothing, sporting-goods, musical-instruments, toys-games, home-goods
+  - maxPrice: MAXIMUM budget in ARS
+  - negotiationStrategy: how strict on budget
+  - timeBudgetSeconds: negotiation time (default 120)
+  - imageUrl: keep as-is if provided
+  - imageDescription: keep as-is if provided
 
-Rules:
-  - Be EFFICIENT. If the user provides enough information in a single message to fill query, maxPrice, and negotiationStrategy, mark done=true immediately. Do NOT ask unnecessary follow-up questions.
-  - Only ask for information that is MISSING. If the user says "quiero un iPhone 13 por menos de 200000, negociá duro", that's everything you need — mark done.
-  - If the user seems casual about budget, set a reasonable default negotiationStrategy like "flexible, willing to negotiate".
-  - Ask ONE focused question per turn when you DO need more info. Do not dump a long list of questions.
-  - Be friendly, concise, and natural. Always respond in Spanish (Argentina), using "vos" instead of "tú".
-  - Update the state with every new fact. Never invent values; only fill in what the user told you.
-  - Once you have at minimum: query, maxPrice, and negotiationStrategy, mark done=true.
-  - If the user uploaded an image (you'll see imageDescription in the state), use that to understand what they're looking for. The image description counts as the query if no text query was given.
-  - If done=true, your reply should briefly summarize the search and confirm we'll start scouting.
-  - IMPORTANT: Always include 2-4 "suggestions" — short button labels the user can tap to quickly answer your question. Make them contextual and useful. Examples:
-    - If asking about budget: ["Hasta $50.000", "Hasta $100.000", "Hasta $200.000", "Sin límite"]
-    - If asking what they want: ["Electrónica", "Vehículos", "Muebles", "Ropa"]
-    - If asking about negotiation style: ["Negociá duro", "Soy flexible", "Precio fijo"]
-  - Always respond in JSON matching the provided schema.`;
+CRITICAL EFFICIENCY RULES:
+  - If the user provides query + maxPrice (or enough to infer both), mark done=true IMMEDIATELY. Default negotiationStrategy to "Negociar al mejor precio posible" if not specified.
+  - If you only know what they want but not budget: ask ONLY for the budget in ONE message. Suggest price ranges based on the marketplace inventory data below.
+  - INFER category from the product name. Never ask the user to pick a category.
+  - Maximum 2-3 turns total.
+  - If the user uploaded an image (imageDescription in state), use it as the query.
+
+MARKETPLACE INVENTORY:
+  You have access to a real marketplace. Use the inventory data provided below to:
+  - Tell the buyer if we have products matching what they're looking for
+  - Suggest realistic budget ranges based on what's actually available
+  - If we clearly have NO products in that category, be honest: "No tenemos eso en el marketplace por ahora"
+  - NEVER make up products that don't exist
+
+Do NOT include suggestions.
+Respond in Spanish (Argentina), using "vos". Be concise. Always respond in JSON matching the provided schema.`;
 
 const SCHEMA = {
   type: "object",
@@ -74,10 +75,12 @@ const SCHEMA = {
 export async function runBuyerOnboardingTurn(
   history: ChatTurn[],
   currentState: BuyerSearchDraft,
+  inventoryContext?: string,
 ): Promise<BuyerOnboardingTurn> {
   const stateNote = `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
+  const inv = inventoryContext ? `\n\n${inventoryContext}` : "";
   return generateJSON<BuyerOnboardingTurn>({
-    system: SYSTEM + "\n\n" + stateNote,
+    system: SYSTEM + "\n\n" + stateNote + inv,
     history,
     jsonSchema: SCHEMA,
     temperature: 0.6,
@@ -88,10 +91,12 @@ export async function streamBuyerOnboardingTurn(
   history: ChatTurn[],
   currentState: BuyerSearchDraft,
   onChunk: (text: string) => void,
+  inventoryContext?: string,
 ): Promise<BuyerOnboardingTurn> {
   const stateNote = `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
+  const inv = inventoryContext ? `\n\n${inventoryContext}` : "";
   return generateStreamJSON<BuyerOnboardingTurn>({
-    system: SYSTEM + "\n\n" + stateNote,
+    system: SYSTEM + "\n\n" + stateNote + inv,
     history,
     jsonSchema: SCHEMA,
     temperature: 0.6,
