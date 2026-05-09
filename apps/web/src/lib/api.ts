@@ -37,7 +37,6 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
-  role: "buyer" | "seller" | "both";
   emailVerified: boolean;
   emailVerifiedAt: string | null;
 };
@@ -52,7 +51,6 @@ export async function signup(input: {
   name: string;
   email: string;
   password: string;
-  role: "buyer" | "seller" | "both";
 }): Promise<AuthResponse> {
   return apiFetch<AuthResponse>("/auth/signup", {
     method: "POST",
@@ -116,11 +114,27 @@ export async function resetPassword(token: string, password: string): Promise<Au
   });
 }
 
-export async function createUser(name: string, email: string, role: "buyer" | "seller" | "both") {
+export async function createUser(name: string, email: string) {
   return apiFetch<AuthUser>("/users", {
     method: "POST",
-    body: JSON.stringify({ name, email, role }),
+    body: JSON.stringify({ name, email }),
   });
+}
+
+export type ConversationSummary = {
+  id: string;
+  status: string;
+  searchId: string | null;
+  createdAt: string;
+  preview: string;
+};
+
+export async function listBuyerConversations(): Promise<ConversationSummary[]> {
+  return apiFetch<ConversationSummary[]>("/buyers/conversations");
+}
+
+export async function getBuyerConversation(id: string) {
+  return apiFetch<{ id: string; status: string; messages: { role: string; content: string }[] }>(`/buyers/conversations/${id}`);
 }
 
 export async function startBuyerConversation() {
@@ -214,9 +228,9 @@ export type Listing = {
   description: string;
   category: string | null;
   condition: string | null;
+  imageUrl: string | null;
   askPrice: number;
   maxPrice: number | null;
-  imageUrl: string | null;
   status: string;
   createdAt: string;
 };
@@ -226,7 +240,7 @@ export type NegotiationSummary = {
   status: string;
   finalPrice: number | null;
   reason: string | null;
-  listing: { id: string; title: string; askPrice: number };
+  listing: { id: string; title: string; askPrice: number; imageUrl: string | null };
 };
 
 export type DealSummary = {

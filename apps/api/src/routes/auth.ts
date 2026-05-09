@@ -25,7 +25,6 @@ const SignupBody = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(8),
-  role: z.enum(["seller", "buyer", "both"]),
 });
 
 const LoginBody = z.object({
@@ -58,7 +57,7 @@ authRouter.post("/signup", asyncHandler(async (req, res) => {
         where: { id: existing.id },
         data: {
           name: parsed.data.name,
-          role: parsed.data.role,
+          role: "both",
           passwordHash: hashPassword(parsed.data.password),
         },
       })
@@ -66,7 +65,7 @@ authRouter.post("/signup", asyncHandler(async (req, res) => {
         data: {
           name: parsed.data.name,
           email: parsed.data.email,
-          role: parsed.data.role,
+          role: "both",
           passwordHash: hashPassword(parsed.data.password),
         },
       });

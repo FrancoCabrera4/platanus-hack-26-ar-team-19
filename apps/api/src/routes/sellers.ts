@@ -8,7 +8,7 @@ import {
 } from "../agents/seller-onboarding";
 import type { ChatTurn } from "../llm/gemini";
 import { asyncHandler, sseHeaders, sseSend } from "./_sse";
-import { requireAuth, requireVerifiedEmail, type AuthUser } from "../auth";
+import { requireAuth, type AuthUser } from "../auth";
 
 export const sellersRouter: RouterType = Router();
 
@@ -30,7 +30,7 @@ function buildHistory(messages: ConversationMessageRow[], content: string): Chat
   ];
 }
 
-sellersRouter.use(requireAuth, requireVerifiedEmail);
+sellersRouter.use(requireAuth);
 
 // POST /sellers/conversations — start a new onboarding chat
 sellersRouter.post("/conversations", asyncHandler(async (req, res) => {

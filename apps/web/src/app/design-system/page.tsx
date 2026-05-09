@@ -78,7 +78,7 @@ export default function DesignSystemPage() {
               <span className="text-primary-foreground text-sm font-bold">A</span>
             </div>
             <span className="font-semibold text-lg" style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}>
-              AgentMarket
+              negocIA
             </span>
           </div>
           <div className="flex items-center gap-6 text-sm">

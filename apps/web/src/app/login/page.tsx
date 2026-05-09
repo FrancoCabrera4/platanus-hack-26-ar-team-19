@@ -23,7 +23,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(email, password);
-      router.push("/onboarding");
+      router.push("/explore");
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "login_failed";
       setError(code === "invalid_credentials" ? "Email o contraseña incorrectos." : "No se pudo iniciar sesión.");
@@ -55,12 +55,7 @@ export default function LoginPage() {
       {/* Left panel */}
       <div className="hidden lg:flex lg:w-1/2 bg-foreground text-background p-12 flex-col justify-between">
         <div>
-          <h1
-            className="text-2xl"
-            style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}
-          >
-            AgentMarket
-          </h1>
+          <img src="/logo.svg" alt="negocIA" className="h-24 invert" />
         </div>
         <div>
           <p
@@ -75,7 +70,7 @@ export default function LoginPage() {
             Decile qué querés vender o comprar. La IA se encarga de encontrar el mejor precio.
           </p>
         </div>
-        <p className="text-background/40 text-sm">© 2026 AgentMarket</p>
+        <p className="text-background/40 text-sm">© 2026 negocIA</p>
       </div>
 
       {/* Right panel */}

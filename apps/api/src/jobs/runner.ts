@@ -86,18 +86,30 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
     data: { status: "running" },
   });
 
-  const matches = await findMatches(payload.searchId, payload.topN ?? 3);
+  const matches = await findMatches(payload.searchId, payload.topN ?? 5);
 
+  // Phase 1: Create all negotiations as "pending" so the frontend can show
+  // the matched products (with images) before any negotiation starts.
+  const pendingNegs: { listingId: string; negotiationId: string }[] = [];
+  for (const m of matches) {
+    const neg = await prisma.negotiation.create({
+      data: {
+        searchId: payload.searchId,
+        listingId: m.listingId,
+        status: "pending",
+      },
+    });
+    pendingNegs.push({ listingId: m.listingId, negotiationId: neg.id });
+  }
+
+  // Phase 2: Negotiate sequentially now that all matches are visible.
   const negotiations: RunSearchJobResult["negotiations"] = [];
   let bestDeal: { dealId: string; listingId: string; finalPrice: number } | null = null;
 
-  // Run negotiations sequentially. We could parallelize, but sequential lets us
-  // stop early if a great deal lands and avoids selling the same listing twice
-  // (the listing.status check inside runNegotiation handles that anyway).
-  for (const m of matches) {
-    const result = await runNegotiation(payload.searchId, m.listingId);
+  for (const pn of pendingNegs) {
+    const result = await runNegotiation(payload.searchId, pn.listingId);
     negotiations.push({
-      listingId: m.listingId,
+      listingId: pn.listingId,
       negotiationId: result.negotiationId,
       status: result.status,
       finalPrice: result.finalPrice,
@@ -106,10 +118,9 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
     if (result.status === "accepted" && result.dealId && result.finalPrice != null) {
       bestDeal = {
         dealId: result.dealId,
-        listingId: m.listingId,
+        listingId: pn.listingId,
         finalPrice: result.finalPrice,
       };
-      // Stop after first deal — buyer wants ONE item, not several.
       break;
     }
   }

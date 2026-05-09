@@ -9,7 +9,7 @@ import {
 import type { ChatTurn } from "../llm/gemini";
 import { enqueueRunSearch } from "../jobs/runner";
 import { asyncHandler, sseHeaders, sseSend } from "./_sse";
-import { requireAuth, requireVerifiedEmail, type AuthUser } from "../auth";
+import { requireAuth, type AuthUser } from "../auth";
 
 export const buyersRouter: RouterType = Router();
 
@@ -31,7 +31,7 @@ function buildHistory(messages: ConversationMessageRow[], content: string): Chat
   ];
 }
 
-buyersRouter.use(requireAuth, requireVerifiedEmail);
+buyersRouter.use(requireAuth);
 
 // POST /buyers/conversations — start a new onboarding chat
 buyersRouter.post("/conversations", asyncHandler(async (req, res) => {
@@ -193,6 +193,25 @@ buyersRouter.post("/conversations/:id/messages/stream", asyncHandler(async (req,
     sseSend(res, { error: (err as Error).message });
   }
   res.end();
+}));
+
+// GET /buyers/conversations — list all conversations for the current user
+buyersRouter.get("/conversations", asyncHandler(async (req, res) => {
+  const user = currentUser(res);
+  const convs = await prisma.buyerConversation.findMany({
+    where: { buyerId: user.id },
+    orderBy: { createdAt: "desc" },
+    include: {
+      messages: { orderBy: { createdAt: "asc" }, take: 1 },
+    },
+  });
+  return res.json(convs.map((c) => ({
+    id: c.id,
+    status: c.status,
+    searchId: c.searchId,
+    createdAt: c.createdAt,
+    preview: c.messages[0]?.content ?? "",
+  })));
 }));
 
 // GET /buyers/conversations/:id

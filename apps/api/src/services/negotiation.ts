@@ -32,14 +32,17 @@ export async function runNegotiation(searchId: string, listingId: string): Promi
   if (!search) throw new Error(`Search ${searchId} not found`);
   if (!listing) throw new Error(`Listing ${listingId} not found`);
 
-  const negotiation = await prisma.negotiation.create({
-    data: {
-      searchId,
-      listingId,
-      status: "running",
-      startedAt: new Date(),
-    },
+  const existing = await prisma.negotiation.findFirst({
+    where: { searchId, listingId, status: "pending" },
   });
+  const negotiation = existing
+    ? await prisma.negotiation.update({
+        where: { id: existing.id },
+        data: { status: "running", startedAt: new Date() },
+      })
+    : await prisma.negotiation.create({
+        data: { searchId, listingId, status: "running", startedAt: new Date() },
+      });
 
   const transcript: TranscriptEntry[] = [];
   const persistTurn = async (side: "seller" | "buyer", move: NegotiatorMove) => {

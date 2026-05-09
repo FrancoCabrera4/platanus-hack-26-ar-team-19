@@ -1,6 +1,6 @@
 import { Router, type Router as RouterType } from "express";
 import prisma from "@repo/db";
-import { getAuthUser, requireAuth, requireVerifiedEmail } from "../auth";
+import { getAuthUser, requireAuth } from "../auth";
 
 export const listingsRouter: RouterType = Router();
 
@@ -30,7 +30,7 @@ listingsRouter.get("/:id", async (req, res) => {
 });
 
 // Owner-only view with private fields included.
-listingsRouter.get("/:id/private", requireAuth, requireVerifiedEmail, async (req, res) => {
+listingsRouter.get("/:id/private", requireAuth, async (req, res) => {
   const user = await getAuthUser(req);
   if (!user) return res.status(401).json({ error: "unauthorized" });
   const listing = await prisma.listing.findUnique({ where: { id: req.params.id } });

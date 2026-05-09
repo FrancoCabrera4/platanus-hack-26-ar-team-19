@@ -11,7 +11,6 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
-  role: string;
   emailVerifiedAt: Date | null;
 };
 
@@ -32,7 +31,6 @@ export function publicUser(user: AuthUser) {
     id: user.id,
     name: user.name,
     email: user.email,
-    role: user.role,
     emailVerified: Boolean(user.emailVerifiedAt),
     emailVerifiedAt: user.emailVerifiedAt,
   };

@@ -3,7 +3,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "AgentMarket",
+  title: "negocIA",
   description: "Marketplace con negociación agéntica",
 };
 

@@ -1,11 +1,11 @@
 import { Router, type Router as RouterType } from "express";
 import prisma from "@repo/db";
 import { enqueueRunSearch } from "../jobs/runner";
-import { requireAuth, requireVerifiedEmail, type AuthUser } from "../auth";
+import { requireAuth, type AuthUser } from "../auth";
 
 export const searchesRouter: RouterType = Router();
 
-searchesRouter.use(requireAuth, requireVerifiedEmail);
+searchesRouter.use(requireAuth);
 
 // POST /searches/:id/run — kick off async match + negotiate pipeline
 searchesRouter.post("/:id/run", async (req, res) => {
@@ -31,7 +31,7 @@ searchesRouter.get("/:id", async (req, res) => {
     where: { id: req.params.id },
     include: {
       negotiations: {
-        include: { listing: { select: { id: true, title: true, askPrice: true } } },
+        include: { listing: { select: { id: true, title: true, askPrice: true, imageUrl: true } } },
       },
       deals: true,
       jobs: { orderBy: { createdAt: "desc" }, take: 5 },
