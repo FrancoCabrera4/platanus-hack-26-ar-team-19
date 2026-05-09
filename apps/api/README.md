@@ -1,208 +1,150 @@
 # Agentic Marketplace API
 
-Backend + AI for an agentic marketplace. Sellers describe their item to an LLM-powered seller agent; buyers describe what they want to an LLM-powered buyer agent. When a buyer kicks off a search, two more agents (a seller-side negotiator and a buyer-side negotiator) haggle on each side's behalf — neither sees the other's reservation price — and a deal is booked when they meet in the middle.
+Backend + AI for an agentic marketplace. Users describe products they want to post or products they want to buy. Posting creates a `Product`; buying creates a `BuyerSearch`; search jobs retrieve semantically similar products with pgvector and then buyer/seller negotiator agents try to close an agreement.
 
 ## Stack
 
 - Express + TypeScript (`apps/api`)
-- Prisma + PostgreSQL (`packages/db`, local DB via Docker Compose)
-- OpenAI via `openai` or Gemini via `@google/generative-ai`
-- Async background jobs via in-process queue (Job rows persisted to DB)
+- Prisma + PostgreSQL + pgvector (`packages/db`, local DB via Docker Compose)
+- OpenAI or Gemini for chat/JSON generation and embeddings
+- Async background jobs via in-process queue (`Job` rows persisted to DB)
 
 ## Setup
 
-1. **Install** (from repo root):
-   ```bash
-   pnpm install
-   ```
-2. **Start PostgreSQL and sync the Prisma schema** (one-time, from repo root):
-   ```bash
-   cp .env.example .env
-   cp packages/db/.env.example packages/db/.env
-   pnpm db:up
-   pnpm db:setup
-   ```
-3. **Configure `apps/api/.env`** (copy from `.env.example`):
-   ```bash
-   cd apps/api
-   cp .env.example .env
-   # edit .env:
-   #   LLM_PROVIDER=openai or gemini
-   #   OPENAI_API_KEY=...your key from https://platform.openai.com/api-keys
-   #   GEMINI_API_KEY=...your key from https://aistudio.google.com/app/apikey
-   #   DATABASE_URL=postgresql://marketplace:marketplace@localhost:5432/marketplace?schema=public
-   ```
-4. **Seed demo data** (optional, lets you skip the onboarding chats):
-   ```bash
-   pnpm seed
-   ```
-5. **Run**:
-   ```bash
-   pnpm dev   # tsup watch + auto-restart
-   # or
-   pnpm build && pnpm start
-   ```
+```bash
+pnpm install
+cp .env.example .env
+cp packages/db/.env.example packages/db/.env
+cp apps/api/.env.example apps/api/.env
+pnpm db:up
+pnpm db:setup
+pnpm seed
+pnpm dev
+```
+
+`pnpm db:setup` is destructive for this demo app: it enables pgvector, force-resets the schema, generates Prisma Client, and creates the vector index.
 
 ## Architecture
 
-```
+```text
 apps/api/src/
-  llm/gemini.ts           # LLM wrapper for OpenAI/Gemini (text + structured JSON output)
+  llm/gemini.ts              # LLM wrapper for OpenAI/Gemini text + structured JSON
   agents/
-    seller-onboarding.ts  # interviews seller → builds Listing draft
-    buyer-onboarding.ts   # interviews buyer → builds BuyerSearch draft
-    seller-negotiator.ts  # one move in a negotiation, sees minPrice (private)
-    buyer-negotiator.ts   # one move in a negotiation, sees maxPrice (private)
+    seller-onboarding.ts     # interviews seller -> builds Product draft
+    buyer-onboarding.ts      # interviews buyer -> builds BuyerSearch draft
+    seller-negotiator.ts     # seller-side negotiation move
+    buyer-negotiator.ts      # buyer-side negotiation move
   services/
-    matching.ts           # SQL prefilter + LLM relevance scoring
-    negotiation.ts        # orchestrates buyer↔seller turns, books deal
-  jobs/
-    runner.ts             # async run_search job: match → negotiate → deal
+    embeddings.ts            # embeddings + pgvector persistence helpers
+    matching.ts              # vector retrieval + optional LLM re-rank
+    negotiation.ts           # buyer/seller turns, accepted outcome on Negotiation
+  jobs/runner.ts             # async run_search job
   routes/
-    users / sellers / buyers / listings / searches / negotiations / jobs
+    auth / users / conversations / products / searches / negotiations / jobs
 ```
 
-### Negotiation contract
+## Data Model
 
-Each agent returns JSON: `{ action, price, message }`.
-
-- `action` ∈ `open` | `counter` | `accept` | `reject`
-- The seller agent NEVER sees the buyer's `maxPrice`; the buyer agent NEVER sees the seller's `minPrice`. Each just gets its own constraints.
-- After the LLM responds we apply a **hard safety floor/ceiling** in code: if the LLM ever drifts past `minPrice` (seller) or `maxPrice` (buyer), we clamp or convert `accept` to `counter`. This is the safety net under the prompt rules.
-- Max 8 turns. Buyer opens. First `accept` from either side at the other's last quoted price closes the deal.
-- Before booking, a `prisma.$transaction` re-checks the listing is still `active` and the price is within both reservations, then atomically creates the `Deal` and flips the listing to `sold`. This prevents one item being sold twice if multiple buyers run searches concurrently.
+- `User`: name, email, optional password hash, sessions. No role field.
+- `Conversation`: one onboarding chat for `mode = "buying" | "posting_product"`, owned by one user.
+- `ConversationMessage`: user/assistant/system messages. System messages store hidden draft state.
+- `Product`: product being sold, with `askPrice` and natural-language `negotiationStrategy`.
+- `ProductEmbedding`: pgvector embedding of product title/description/category/condition.
+- `BuyerSearch`: buyer intent, budget (`maxPrice`), and buyer-side `negotiationStrategy`.
+- `Negotiation`: one search/product negotiation. If `successful = true`, this row is the deal.
+- `NegotiationMessage`: transcript of buyer/seller negotiation moves.
+- `Job`: async search execution state.
 
 ## REST API
 
 All bodies are JSON. Error responses are `{ "error": ... }`.
 
+### Auth
+
+| Method | Path | Body | Returns |
+| --- | --- | --- | --- |
+| POST | `/auth/signup` | `{ name, email, password }` | `{ user }` |
+| POST | `/auth/login` | `{ email, password }` | `{ user }` |
+| POST | `/auth/logout` | | `204` |
+| GET | `/auth/me` | | `{ user }` |
+
+Auth uses the HTTP-only `am_session` cookie.
+
 ### Users
 
-| Method | Path             | Body                          | Returns          |
-| ------ | ---------------- | ----------------------------- | ---------------- |
-| POST   | `/users`         | `{ name, email, role }`       | `User`           |
-| GET    | `/users/:id`     |                               | `User`           |
+| Method | Path | Body | Returns |
+| --- | --- | --- | --- |
+| POST | `/users` | `{ name, email }` | `User` |
+| GET | `/users/:id` | | `User` |
 
-`role`: `"seller" | "buyer" | "both"`. Re-posting the same email returns the existing user (idempotent).
+### Conversations
 
-### Seller onboarding
+| Method | Path | Body | Returns |
+| --- | --- | --- | --- |
+| POST | `/conversations` | `{ mode: "buying" | "posting_product" }` | `{ id, mode, status, state, done, messages }` |
+| GET | `/conversations?mode=buying` | | conversation summaries |
+| GET | `/conversations/:id` | | conversation + visible messages + product/search |
+| POST | `/conversations/:id/messages` | `{ content }` | `{ reply, state, done, productId?, searchId?, jobId? }` |
+| POST | `/conversations/:id/messages/stream` | `{ content }` | SSE `{ chunk }` and final `{ done, state, productId?, searchId?, jobId? }` |
 
-| Method | Path                                   | Body                  | Returns                                   |
-| ------ | -------------------------------------- | --------------------- | ----------------------------------------- |
-| POST   | `/sellers/conversations`               | `{ sellerId }`        | `{ id, state, done, messages }`           |
-| POST   | `/sellers/conversations/:id/messages`  | `{ content }`         | `{ reply, state, done, listingId? }`      |
-| GET    | `/sellers/conversations/:id`           |                       | conversation + messages + listing         |
+Posting mode creates a `Product`. Buying mode creates a `BuyerSearch` and immediately enqueues a search job.
 
-When `done: true`, a `Listing` is created and `listingId` is returned.
+### Products
 
-### Buyer onboarding
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/products` | optional `?status=active&category=electronics` |
+| GET | `/products/:id` | public product fields |
+| GET | `/products/:id/private` | owner-only, includes `negotiationStrategy` |
 
-| Method | Path                                  | Body                  | Returns                              |
-| ------ | ------------------------------------- | --------------------- | ------------------------------------ |
-| POST   | `/buyers/conversations`               | `{ buyerId }`         | `{ id, state, done, messages }`      |
-| POST   | `/buyers/conversations/:id/messages`  | `{ content }`         | `{ reply, state, done, searchId? }` |
-| GET    | `/buyers/conversations/:id`           |                       | conversation + messages + search    |
+### Searches & Jobs
 
-When `done: true`, a `BuyerSearch` is created with status `ready`.
+| Method | Path | Returns |
+| --- | --- | --- |
+| POST | `/searches/:id/run` | `202 { jobId, searchId }` |
+| GET | `/searches/:id` | search + negotiations + recent jobs |
+| GET | `/jobs/:id` | `{ status, result?, error? }` |
 
-### Listings (public)
-
-| Method | Path                       | Notes                                              |
-| ------ | -------------------------- | -------------------------------------------------- |
-| GET    | `/listings`                | optional `?status=active&category=electronics`     |
-| GET    | `/listings/:id`            | excludes `minPrice` and `strategyNotes` (private)  |
-| GET    | `/listings/:id/private`    | requires `?sellerId=...` (must match owner)        |
-
-### Searches & jobs
-
-| Method | Path                          | Body | Returns                               |
-| ------ | ----------------------------- | ---- | ------------------------------------- |
-| POST   | `/searches/:id/run`           |      | `202 { jobId, searchId }` (async)     |
-| GET    | `/searches/:id`               |      | search + negotiations + deals + jobs  |
-| GET    | `/jobs/:id`                   |      | `{ status, result?, error? }`         |
-
-`POST /searches/:id/run` returns immediately. Poll `GET /jobs/:id` until `status` is `succeeded` or `failed`. The `result` field contains:
+Job result shape:
 
 ```jsonc
 {
-  "matches": [{ "listingId": "...", "score": 0.87, "rationale": "..." }],
+  "matches": [{ "productId": "...", "score": 0.87, "rationale": "..." }],
   "negotiations": [
-    { "listingId": "...", "negotiationId": "...", "status": "accepted", "finalPrice": 540000, "dealId": "..." }
+    {
+      "productId": "...",
+      "negotiationId": "...",
+      "status": "accepted",
+      "successful": true,
+      "finalPrice": 540000
+    }
   ],
-  "bestDeal": { "dealId": "...", "listingId": "...", "finalPrice": 540000 }
+  "successfulNegotiation": {
+    "negotiationId": "...",
+    "productId": "...",
+    "finalPrice": 540000
+  }
 }
 ```
 
 ### Negotiations
 
-| Method | Path                  | Returns                                    |
-| ------ | --------------------- | ------------------------------------------ |
-| GET    | `/negotiations/:id`   | full transcript, listing summary, deal     |
+| Method | Path | Returns |
+| --- | --- | --- |
+| GET | `/negotiations/:id` | transcript, product summary, outcome |
 
-Each `NegotiationMessage` has `side`, `action`, `proposedPrice`, `content`, `createdAt` — useful for replaying the conversation in a UI.
+Each `NegotiationMessage` has `side`, `action`, `proposedPrice`, `content`, and `createdAt`.
 
-## End-to-end demo (curl)
+## Matching & Negotiation
 
-The fastest way to see the whole loop, using the seed data:
+Matching embeds the buyer search text, retrieves nearest product embeddings with pgvector, applies coarse price/category filters, drops products below the minimum vector similarity threshold (`MIN_MATCH_SIMILARITY`, default `0.3`), and then asks the LLM to re-rank the remaining candidates. If LLM re-ranking fails, vector similarity is used as the fallback score.
 
-```bash
-# 1. Run the seed (one time)
-pnpm seed
-# → prints buyer and search IDs. Save the search ID.
+Negotiation runs up to 8 turns, buyer opens, and the first accept closes at the other side's last quoted price. The buyer `maxPrice` is still enforced in code. Seller behavior is guided by `askPrice` and natural-language `negotiationStrategy`, not a hidden floor.
 
-# 2. Kick off the search
-SEARCH_ID=<paste from seed output>
-JOB=$(curl -sX POST http://localhost:4000/searches/$SEARCH_ID/run | jq -r .jobId)
+Before accepting, a Prisma transaction re-checks that the product is still `active`, verifies the final price does not exceed the buyer budget, marks the product `sold`, and updates the `Negotiation` as successful.
 
-# 3. Poll until done (negotiations take ~10–30s of LLM calls)
-while true; do
-  STATUS=$(curl -s http://localhost:4000/jobs/$JOB | jq -r .status)
-  echo "job: $STATUS"
-  [ "$STATUS" = "succeeded" -o "$STATUS" = "failed" ] && break
-  sleep 2
-done
+## Limits
 
-# 4. See the result + best deal
-curl -s http://localhost:4000/jobs/$JOB | jq
-
-# 5. Read a negotiation transcript
-NEG_ID=$(curl -s http://localhost:4000/searches/$SEARCH_ID | jq -r '.negotiations[0].id')
-curl -s http://localhost:4000/negotiations/$NEG_ID | jq
-```
-
-To exercise the **onboarding agents** end-to-end (real chat, not seeded):
-
-```bash
-# Create users
-SELLER=$(curl -sX POST http://localhost:4000/users -H 'content-type: application/json' \
-  -d '{"name":"Ana","email":"ana@x.com","role":"seller"}' | jq -r .id)
-BUYER=$(curl -sX POST http://localhost:4000/users -H 'content-type: application/json' \
-  -d '{"name":"Diego","email":"diego@x.com","role":"buyer"}' | jq -r .id)
-
-# Start seller onboarding
-SCONV=$(curl -sX POST http://localhost:4000/sellers/conversations -H 'content-type: application/json' \
-  -d "{\"sellerId\":\"$SELLER\"}" | jq -r .id)
-
-# Reply turns
-curl -sX POST http://localhost:4000/sellers/conversations/$SCONV/messages \
-  -H 'content-type: application/json' \
-  -d '{"content":"Selling an iPhone 13 128GB, like new, with original box"}'
-# … keep responding until { "done": true, "listingId": "..." }
-
-# Same for the buyer
-BCONV=$(curl -sX POST http://localhost:4000/buyers/conversations -H 'content-type: application/json' \
-  -d "{\"buyerId\":\"$BUYER\"}" | jq -r .id)
-curl -sX POST http://localhost:4000/buyers/conversations/$BCONV/messages \
-  -H 'content-type: application/json' \
-  -d '{"content":"I want an iPhone 13, max 580000 ARS"}'
-# … until you get { "done": true, "searchId": "..." }
-
-# Then run the search as in the seed flow above.
-```
-
-## Notes & limits
-
-- The job runner is in-process. Restart the server and any `running` job is orphaned — fine for hackathon, replace with BullMQ/Redis for production.
-- The 20% slack on price filtering (`askPrice <= maxPrice * 1.2`) keeps listings priced just above the buyer's ceiling in scope so the negotiator can pull them down.
-- Negotiation runs sequentially across candidate listings and stops at the first deal. Switching to "accumulate all deals and pick cheapest" is a one-line change in `jobs/runner.ts`.
-- Listings are flipped to `sold` inside the same transaction as deal creation, so two concurrent searches can't double-book the same listing.
+- Jobs run in-process. A restart can orphan a running job.
+- This is intentionally demo-grade auth: no email verification or password reset tokens.
+- Product embeddings are generated from public product descriptors, not negotiation strategy.

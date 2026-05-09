@@ -1,106 +1,76 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance when working with this repository.
 
 ## What this project is
 
-Hackathon project (Platanus Hack 26, Buenos Aires, team-19, "Agentic Money" track): an **agentic marketplace** where LLM-powered agents onboard sellers/buyers and then a separate pair of negotiator agents haggle on each side's behalf. The API is the substantive code; the Next.js web app is a near-empty scaffold.
+Hackathon project (Platanus Hack 26, Buenos Aires, team-19, "Agentic Money" track): an agentic marketplace where LLM-powered agents help users post products, search for products, and negotiate on their behalf.
 
-`apps/api/README.md` has the canonical end-to-end flow, REST contract, and curl walkthrough — read it first when working on backend changes.
+`apps/api/README.md` has the canonical backend flow and REST contract. Read it first when working on backend changes.
 
 ## Common commands
 
-All commands run from the repo root unless noted. Turbo orchestrates per-package scripts.
+All commands run from the repo root unless noted.
 
 ```bash
-# Top-level (turbo fans out across workspaces)
 pnpm install
-pnpm dev          # runs every package's dev (API tsup-watch + Next.js)
+pnpm dev
 pnpm build
 pnpm lint
 pnpm type-check
 
-# Database (Prisma + PostgreSQL via Docker). The schema lives in packages/db/prisma/schema.prisma.
-pnpm db:up                    # docker compose up -d postgres
-# Shortcut from the API package:
-pnpm --filter api db:setup       # prisma db push + prisma generate
-# Or directly:
-pnpm --filter @repo/db db:push
-pnpm --filter @repo/db db:generate
+pnpm db:up
+pnpm db:setup                    # destructive demo reset: pgvector + db push + generate
 
-# API only
-pnpm --filter api dev            # tsup --watch + auto-restart on rebuild
-pnpm --filter api seed           # demo sellers/listings/search (idempotent)
-pnpm --filter api scrape:fb      # Playwright scrape of FB Marketplace BA → apps/api/data/*.json
-pnpm --filter api seed:fb        # import latest scrape file into the DB
+pnpm --filter api dev
+pnpm seed                        # import latest FB Marketplace scrape
+pnpm --filter api scrape:fb
+pnpm --filter api seed:fb        # same importer, with optional file arg
 
-# Web only
 pnpm --filter web dev
 ```
 
-There is no test runner configured. `@repo/db`'s `test` script is a placeholder that exits 1 — do not run it.
+There is no test runner configured. `@repo/db`'s `test` script is a placeholder that exits 1; do not run it.
 
 ## Environment
 
-Three env files matter:
-
-- **Repo root `.env`**: `DATABASE_URL=postgresql://marketplace:marketplace@localhost:5432/marketplace?schema=public`.
-- **`packages/db/.env`**: same `DATABASE_URL`, used when running Prisma commands from the db package.
-- **`apps/api/.env`**: needs `LLM_PROVIDER=openai|gemini`, the matching API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`), and the same `DATABASE_URL`. If `LLM_PROVIDER` is omitted, the API uses OpenAI when `OPENAI_API_KEY` is set and otherwise Gemini.
-
-```bash
-cp .env.example .env
-cp packages/db/.env.example packages/db/.env
-cp apps/api/.env.example apps/api/.env
-```
+- Root `.env`: `DATABASE_URL=postgresql://marketplace:marketplace@localhost:5432/marketplace?schema=public`.
+- `packages/db/.env`: same `DATABASE_URL`.
+- `apps/api/.env`: `DATABASE_URL`, `LLM_PROVIDER=openai|gemini`, and the matching API key. OpenAI is used automatically when `OPENAI_API_KEY` exists; otherwise Gemini is used.
 
 ## Architecture
 
-### Monorepo layout
+- `apps/api`: Express + TypeScript backend.
+- `apps/web`: Next.js 14 frontend.
+- `packages/db`: Prisma client singleton and schema.
+- `packages/logger`: thin logger wrapper.
+- `packages/ui`: shared shadcn-style UI components.
 
-- `apps/api` — Express + TypeScript backend, all the agent/negotiation logic. Built with `tsup` (CJS).
-- `apps/web` — Next.js 14 app. Currently a stock scaffold; treat as a placeholder.
-- `packages/db` — Prisma client singleton + schema. Exports `prisma` as default. PostgreSQL is available locally through Docker Compose.
-- `packages/logger` — thin `log()` wrapper.
-- `packages/ui` — shadcn-style React components, Tailwind. Used by web; some types pulled in by API as a dev dep.
-- `packages/config-eslint`, `config-tailwind`, `config-typescript` — shared configs (`@repo/*`).
+## Backend Model
 
-### The agent system (apps/api/src)
+- `User`: unified account with no marketplace role field.
+- `Conversation`: one onboarding chat with `mode = "buying" | "posting_product"`.
+- `Product`: seller product with `askPrice` and natural-language `negotiationStrategy`; no hidden seller floor/ceiling fields.
+- `ProductEmbedding`: pgvector embedding for semantic product retrieval.
+- `BuyerSearch`: buyer intent with `maxPrice` and buyer-side `negotiationStrategy`.
+- `Negotiation`: one search/product negotiation. A successful negotiation is the deal; there is no separate `Deal` model.
+- `Job`: in-process async search runner state.
 
-There are **four** distinct agent roles, and conflating them is the easiest way to break the model:
+## Agent System
 
-- `agents/seller-onboarding.ts` — chats with a seller, fills a `Listing` draft (incl. the **private** `minPrice` reservation).
-- `agents/buyer-onboarding.ts` — chats with a buyer, fills a `BuyerSearch` (incl. the **private** `maxPrice` reservation).
-- `agents/seller-negotiator.ts` — single-turn negotiator. Sees `minPrice` (its own floor). **Never** sees the buyer's `maxPrice`.
-- `agents/buyer-negotiator.ts` — single-turn negotiator. Sees `maxPrice` (its own ceiling). **Never** sees the seller's `minPrice`.
+- `agents/seller-onboarding.ts`: chats with a seller and builds a Product draft.
+- `agents/buyer-onboarding.ts`: chats with a buyer and builds a BuyerSearch draft.
+- `agents/seller-negotiator.ts`: seller-side single-turn negotiator using ask price and negotiation strategy.
+- `agents/buyer-negotiator.ts`: buyer-side single-turn negotiator using max budget and negotiation strategy.
 
-Each negotiator turn returns JSON `{ action, price, message }` with `action ∈ open|counter|accept|reject`. The orchestrator in `services/negotiation.ts` runs up to 8 turns (buyer opens, alternating). An `accept` from one side closes at the **other side's last quoted price**.
+Negotiation runs up to 8 turns. Buyer opens. An accept closes at the other side's last quoted price. The code still enforces the buyer budget and product availability inside a transaction before marking a negotiation successful and the product sold.
 
-### Two invariants worth preserving
+## Matching Pipeline
 
-1. **Reservation prices are private.** `minPrice` and `strategyNotes` must never reach the buyer side; `maxPrice` must never reach the seller side. The public listing route `GET /listings/:id` already strips these — `GET /listings/:id/private` is the only seller-scoped read. When adding endpoints or changing prompts, keep this asymmetry.
-2. **Hard safety clamps in code, not in the LLM prompt.** Prompts ask the LLM to respect floors/ceilings, but `services/negotiation.ts` re-checks every accept inside a `prisma.$transaction`: it refetches the listing, verifies `status === "active"`, asserts `finalPrice ∈ [minPrice, maxPrice]`, then atomically creates the `Deal` and flips listing to `sold`. This single transaction is what prevents double-selling under concurrent searches and what guards against LLM drift past the reservation prices. **Don't move these checks out of the transaction.**
+`services/matching.ts` embeds buyer search text, retrieves nearest products from `ProductEmbedding` with pgvector, applies coarse status/price/category filters, then asks the LLM to re-rank. If LLM scoring fails, vector similarity is the fallback.
 
-### Matching pipeline (`services/matching.ts`)
+## Workspace Conventions
 
-Two-step: SQL prefilter (`status="active"`, `askPrice <= maxPrice * 1.2`, optional category) → Gemini structured-JSON scoring of top candidates. The 1.2x slack is intentional: listings priced just above the buyer's ceiling are kept in scope so the negotiator can pull them down. There is a price-distance fallback if Gemini scoring fails — keep it.
-
-### Job runner (`jobs/runner.ts`)
-
-In-process, persisted via the `Job` table. `enqueueRunSearch` writes a `queued` row and schedules the work via `setImmediate`. **A server restart orphans any `running` job** — fine for the demo, would need BullMQ/Redis for production.
-
-`run_search` runs negotiations sequentially across matches and **stops at the first accepted deal** (a buyer wants one item). To switch to "collect all deals, pick cheapest," it's a single change in `executeRunSearch`.
-
-### LLM access (`llm/gemini.ts`)
-
-All LLM calls go through `generate()` / `generateJSON()`. Set `LLM_PROVIDER=openai` or `LLM_PROVIDER=gemini`; if omitted, the API uses OpenAI when `OPENAI_API_KEY` is set and otherwise Gemini. Defaults: OpenAI `gpt-4o-mini`, Gemini `gemini-2.0-flash`, temperature 0.7 for prose / 0.4 for JSON. `generateJSON` requires a `jsonSchema`; the wrapper maps structured JSON mode for both providers. If you need a new agent, add it under `agents/` and call through this wrapper rather than instantiating a new client.
-
-### Data model highlights (`packages/db/prisma/schema.prisma`)
-
-`User` is unified (role: `seller | buyer | both`). `Listing` and `BuyerSearch` each carry **both** their owner's reservation price and the public-facing one. `Negotiation` has a one-to-one `Deal`. `ConversationMessage` is shared between seller- and buyer-onboarding via two nullable foreign keys (one is always set).
-
-## Workspace conventions
-
-- Internal packages are referenced as `@repo/<name>` (`workspace:*`). `@repo/db` exports a Prisma singleton as default — import as `import prisma from "@repo/db"`.
-- Add new internal packages to `pnpm-workspace.yaml` patterns (`apps/*`, `packages/*`). Turbo picks them up automatically.
-- `apps/api/data/` (scraper output) is gitignored.
+- Internal packages are referenced as `@repo/<name>` (`workspace:*`).
+- `@repo/db` exports a Prisma singleton as default: `import prisma from "@repo/db"`.
+- `apps/api/data/` scraper output is gitignored.

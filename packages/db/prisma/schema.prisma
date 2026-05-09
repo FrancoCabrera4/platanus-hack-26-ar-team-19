@@ -11,23 +11,19 @@ datasource db {
 }
 
 model User {
-  id              String    @id @default(uuid())
-  name            String
-  email           String    @unique
-  role            String    // "seller" | "buyer" | "both"
-  passwordHash    String?
-  emailVerifiedAt DateTime?
-  createdAt       DateTime  @default(now())
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  listings           Listing[]
-  sellerConvs        SellerConversation[]
-  buyerConvs         BuyerConversation[]
-  buyerSearches      BuyerSearch[]
-  dealsAsSeller      Deal[]               @relation("DealsAsSeller")
-  dealsAsBuyer       Deal[]               @relation("DealsAsBuyer")
-  sessions           Session[]
-  emailTokens        EmailVerificationToken[]
-  passwordResetTokens PasswordResetToken[]
+  products      Product[]
+  conversations Conversation[]
+  buyerSearches BuyerSearch[]
+  purchases     Negotiation[] @relation("BuyerNegotiations")
+  sales         Negotiation[] @relation("SellerNegotiations")
+  sessions      Session[]
 }
 
 model Session {
@@ -38,79 +34,60 @@ model Session {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
-model EmailVerificationToken {
-  id        String   @id @default(uuid())
-  userId    String
-  tokenHash String   @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime @default(now())
+// A product the user wants to sell. The seller's pricing flexibility is
+// captured as natural language rather than hidden numeric reservation fields.
+model Product {
+  id                  String   @id @default(uuid())
+  userId              String
+  conversationId      String?  @unique
+  title               String
+  description         String
+  category            String?
+  condition           String?
+  askPrice            Float
+  negotiationStrategy String?
+  imageUrl            String?
+  status              String   @default("active") // active | sold | withdrawn
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User              @relation(fields: [userId], references: [id])
+  conversation Conversation?     @relation(fields: [conversationId], references: [id])
+  embedding    ProductEmbedding?
+  negotiations Negotiation[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([category])
 }
 
-model PasswordResetToken {
-  id        String   @id @default(uuid())
-  userId    String
-  tokenHash String   @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime @default(now())
+model ProductEmbedding {
+  id        String                 @id @default(uuid())
+  productId String                 @unique
+  embedding Unsupported("vector(1536)")
+  text      String
+  model     String
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 }
 
-// A product the seller wants to sell. minPrice is the seller's hidden
-// reservation price (never shown to buyers). askPrice is the public price.
-model Listing {
-  id             String   @id @default(uuid())
-  sellerId       String
-  title          String
-  description    String
-  category       String?
-  condition      String?
-  askPrice       Float
-  minPrice       Float
-  maxPrice       Float?
-  imageUrl       String?
-  strategyNotes  String?
-  status         String   @default("active") // active | sold | withdrawn
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  seller         User                  @relation(fields: [sellerId], references: [id])
-  conversation   SellerConversation?
-  negotiations   Negotiation[]
-  deals          Deal[]
-}
-
-// Onboarding chat where the seller describes the product.
-model SellerConversation {
-  id        String   @id @default(uuid())
-  sellerId  String
-  listingId String?  @unique
-  status    String   @default("in_progress") // in_progress | completed
-  state     String   @default("{}") // JSON of fields extracted so far
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  seller   User                   @relation(fields: [sellerId], references: [id])
-  listing  Listing?               @relation(fields: [listingId], references: [id])
-  messages ConversationMessage[]
-}
-
-// What a buyer is looking for. maxPrice is the buyer's hidden reservation
-// price (never shown to sellers). minPrice is just an aspirational floor.
+// What a buyer is looking for. maxPrice is still a hard buyer budget; the
+// strategy field captures how strict or urgent the buyer feels about it.
 model BuyerSearch {
   id                String   @id @default(uuid())
   buyerId           String
+  conversationId    String?  @unique
   query             String
   requirements      String?
   category          String?
-  minPrice          Float?
   maxPrice          Float
+  negotiationStrategy String?
   timeBudgetSeconds Int      @default(120)
   status            String   @default("collecting")
     // collecting | ready | running | completed | failed
@@ -118,57 +95,75 @@ model BuyerSearch {
   updatedAt         DateTime @updatedAt
 
   buyer        User                @relation(fields: [buyerId], references: [id])
-  conversation BuyerConversation?
+  conversation Conversation?        @relation(fields: [conversationId], references: [id])
   negotiations Negotiation[]
-  deals        Deal[]
   jobs         Job[]
+
+  @@index([buyerId])
+  @@index([status])
+  @@index([category])
 }
 
-// Onboarding chat where the buyer describes what they want.
-model BuyerConversation {
+// Generic onboarding conversation. mode is "buying" or "posting_product".
+model Conversation {
   id        String   @id @default(uuid())
-  buyerId   String
-  searchId  String?  @unique
-  status    String   @default("in_progress")
-  state     String   @default("{}")
+  userId    String
+  mode      String
+  status    String   @default("in_progress") // in_progress | completed
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  buyer    User                   @relation(fields: [buyerId], references: [id])
-  search   BuyerSearch?           @relation(fields: [searchId], references: [id])
+  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product  Product?
+  search   BuyerSearch?
   messages ConversationMessage[]
+
+  @@index([userId])
+  @@index([mode])
+  @@index([status])
 }
 
-// Generic message used by both onboarding conversations.
 model ConversationMessage {
-  id                  String   @id @default(uuid())
-  sellerConvId        String?
-  buyerConvId         String?
-  role                String   // "user" | "assistant" | "system"
-  content             String
-  createdAt           DateTime @default(now())
+  id             String   @id @default(uuid())
+  conversationId String
+  role           String   // user | assistant | system
+  content        String
+  createdAt      DateTime @default(now())
 
-  sellerConv SellerConversation? @relation(fields: [sellerConvId], references: [id], onDelete: Cascade)
-  buyerConv  BuyerConversation?  @relation(fields: [buyerConvId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
 }
 
-// One negotiation = one (search, listing) pair worked through by two LLM agents.
+// One negotiation = one (search, product) pair worked through by two LLM agents.
+// A successful negotiation is the deal record.
 model Negotiation {
   id          String    @id @default(uuid())
   searchId    String
-  listingId   String
+  productId   String
+  buyerId     String
+  sellerId    String
   status      String    @default("pending")
     // pending | running | accepted | rejected | timed_out | error
+  successful  Boolean   @default(false)
   finalPrice  Float?
   reason      String?
   startedAt   DateTime?
   completedAt DateTime?
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   search   BuyerSearch          @relation(fields: [searchId], references: [id])
-  listing  Listing              @relation(fields: [listingId], references: [id])
+  product  Product              @relation(fields: [productId], references: [id])
+  buyer    User                 @relation("BuyerNegotiations", fields: [buyerId], references: [id])
+  seller   User                 @relation("SellerNegotiations", fields: [sellerId], references: [id])
   messages NegotiationMessage[]
-  deal     Deal?
+
+  @@index([searchId])
+  @@index([productId])
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([status])
 }
 
 model NegotiationMessage {
@@ -181,23 +176,8 @@ model NegotiationMessage {
   createdAt     DateTime @default(now())
 
   negotiation Negotiation @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
-}
 
-model Deal {
-  id            String   @id @default(uuid())
-  negotiationId String   @unique
-  listingId     String
-  searchId      String
-  buyerId       String
-  sellerId      String
-  finalPrice    Float
-  createdAt     DateTime @default(now())
-
-  negotiation Negotiation @relation(fields: [negotiationId], references: [id])
-  listing     Listing     @relation(fields: [listingId], references: [id])
-  search      BuyerSearch @relation(fields: [searchId], references: [id])
-  buyer       User        @relation("DealsAsBuyer", fields: [buyerId], references: [id])
-  seller      User        @relation("DealsAsSeller", fields: [sellerId], references: [id])
+  @@index([negotiationId])
 }
 
 // Background job tracking for async match+negotiate runs.

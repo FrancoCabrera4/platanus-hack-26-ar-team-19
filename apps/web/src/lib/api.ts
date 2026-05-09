@@ -37,14 +37,10 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
-  emailVerified: boolean;
-  emailVerifiedAt: string | null;
 };
 
 export type AuthResponse = {
   user: AuthUser;
-  verificationUrl?: string;
-  verificationToken?: string;
 };
 
 export async function signup(input: {
@@ -82,38 +78,6 @@ export async function getMe(): Promise<AuthUser | null> {
   }
 }
 
-export async function requestEmailVerification(): Promise<{
-  verificationUrl?: string;
-  verificationToken?: string;
-}> {
-  return apiFetch("/auth/request-email-verification", { method: "POST" });
-}
-
-export async function verifyEmail(token: string): Promise<AuthResponse> {
-  return apiFetch<AuthResponse>("/auth/verify-email", {
-    method: "POST",
-    body: JSON.stringify({ token }),
-  });
-}
-
-export async function requestPasswordReset(email: string): Promise<{
-  ok: boolean;
-  resetUrl?: string;
-  resetToken?: string;
-}> {
-  return apiFetch("/auth/request-password-reset", {
-    method: "POST",
-    body: JSON.stringify({ email }),
-  });
-}
-
-export async function resetPassword(token: string, password: string): Promise<AuthResponse> {
-  return apiFetch<AuthResponse>("/auth/reset-password", {
-    method: "POST",
-    body: JSON.stringify({ token, password }),
-  });
-}
-
 export async function createUser(name: string, email: string) {
   return apiFetch<AuthUser>("/users", {
     method: "POST",
@@ -121,52 +85,59 @@ export async function createUser(name: string, email: string) {
   });
 }
 
+export type ConversationMode = "buying" | "posting_product";
+
 export type ConversationSummary = {
   id: string;
+  mode: ConversationMode;
   status: string;
   searchId: string | null;
+  productId: string | null;
   createdAt: string;
   preview: string;
 };
 
-export async function listBuyerConversations(): Promise<ConversationSummary[]> {
-  return apiFetch<ConversationSummary[]>("/buyers/conversations");
+export async function listConversations(mode?: ConversationMode): Promise<ConversationSummary[]> {
+  const query = mode ? `?mode=${encodeURIComponent(mode)}` : "";
+  return apiFetch<ConversationSummary[]>(`/conversations${query}`);
 }
 
-export async function getBuyerConversation(id: string) {
-  return apiFetch<{ id: string; status: string; messages: { role: string; content: string }[] }>(`/buyers/conversations/${id}`);
+export async function getConversation(id: string) {
+  return apiFetch<{
+    id: string;
+    mode: ConversationMode;
+    status: string;
+    messages: { role: string; content: string }[];
+    searchId?: string | null;
+    productId?: string | null;
+    search?: { id: string } | null;
+    product?: { id: string } | null;
+  }>(`/conversations/${id}`);
 }
 
-export async function startBuyerConversation() {
-  return apiFetch<{ id: string; messages: { role: string; content: string }[] }>("/buyers/conversations", {
+export async function startConversation(mode: ConversationMode) {
+  return apiFetch<{ id: string; mode: ConversationMode; messages: { role: string; content: string }[] }>("/conversations", {
     method: "POST",
-    body: JSON.stringify({}),
-  });
-}
-
-export async function startSellerConversation() {
-  return apiFetch<{ id: string; messages: { role: string; content: string }[] }>("/sellers/conversations", {
-    method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ mode }),
   });
 }
 
 export async function streamMessage(
-  type: "buyer" | "seller",
   conversationId: string,
   content: string,
   onChunk: (text: string) => void,
-  onDone: (data: { state: unknown; searchId?: string; listingId?: string; jobId?: string }) => void,
+  onDone: (data: { state: unknown; searchId?: string; productId?: string; jobId?: string }) => void,
   onError: (error: string) => void,
+  signal?: AbortSignal,
 ) {
-  const endpoint = type === "buyer" ? "buyers" : "sellers";
   const res = await fetch(
-    `${API_URL}/${endpoint}/conversations/${conversationId}/messages/stream`,
+    `${API_URL}/conversations/${conversationId}/messages/stream`,
     {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
+      signal,
     },
   );
 
@@ -221,9 +192,9 @@ export async function streamMessage(
   }
 }
 
-export type Listing = {
+export type Product = {
   id: string;
-  sellerId: string;
+  userId: string;
   title: string;
   description: string;
   category: string | null;
@@ -238,27 +209,20 @@ export type Listing = {
 export type NegotiationSummary = {
   id: string;
   status: string;
+  successful: boolean;
   finalPrice: number | null;
   reason: string | null;
-  listing: { id: string; title: string; askPrice: number; imageUrl: string | null };
-};
-
-export type DealSummary = {
-  id: string;
-  listingId: string;
-  finalPrice: number;
-  createdAt: string;
+  product: { id: string; title: string; askPrice: number; imageUrl: string | null };
 };
 
 export type SearchDetail = {
   id: string;
   query: string;
   category: string | null;
-  minPrice: number | null;
   maxPrice: number;
+  negotiationStrategy: string | null;
   status: "collecting" | "ready" | "running" | "completed" | "failed";
   negotiations: NegotiationSummary[];
-  deals: DealSummary[];
   jobs: { id: string; status: string; error: string | null; createdAt: string }[];
 };
 
@@ -274,11 +238,11 @@ export type NegotiationMessage = {
 export type NegotiationDetail = {
   id: string;
   status: string;
+  successful: boolean;
   finalPrice: number | null;
   reason: string | null;
-  listing: { id: string; title: string; askPrice: number };
+  product: { id: string; title: string; askPrice: number };
   messages: NegotiationMessage[];
-  deal: { id: string; finalPrice: number } | null;
 };
 
 export type JobDetail = {
@@ -289,10 +253,10 @@ export type JobDetail = {
   result: unknown;
 };
 
-export async function listListings(): Promise<Listing[]> {
-  const res = await fetch(`${API_URL}/listings?status=active`);
+export async function listProducts(): Promise<Product[]> {
+  const res = await fetch(`${API_URL}/products?status=active`);
   if (!res.ok) return [];
-  return (await res.json()) as Listing[];
+  return (await res.json()) as Product[];
 }
 
 export async function getSearch(id: string): Promise<SearchDetail> {
@@ -305,4 +269,44 @@ export async function getNegotiation(id: string): Promise<NegotiationDetail> {
 
 export async function getJob(id: string): Promise<JobDetail> {
   return apiFetch<JobDetail>(`/jobs/${id}`);
+}
+
+// --- Image upload ---
+// Backend endpoint: POST /uploads/image (requireAuth, multipart/form-data)
+// Expected: FormData with field "image" (File)
+// Returns: { url: string } — the public URL of the uploaded image.
+// TODO: backend needs to add this endpoint. Example handler:
+//   1. Accept multipart via multer
+//   2. Save file to /public/uploads/ or an S3 bucket
+//   3. Return { url: "/uploads/<filename>" } or full S3 URL
+export async function uploadImage(file: File): Promise<{ url: string }> {
+  const form = new FormData();
+  form.append("image", file);
+  const res = await fetch(`${API_URL}/uploads/image`, {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (!res.ok) throw new Error("Upload failed");
+  return res.json();
+}
+
+// --- Audio transcription (Whisper) ---
+export async function transcribeAudio(audioBlob: Blob): Promise<string> {
+  const form = new FormData();
+  form.append("file", audioBlob, "audio.webm");
+  form.append("model", "whisper-1");
+  form.append("language", "es");
+
+  const key = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+  if (!key) throw new Error("Missing NEXT_PUBLIC_OPENAI_API_KEY");
+
+  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  if (!res.ok) throw new Error("Transcription failed");
+  const data = await res.json();
+  return data.text;
 }

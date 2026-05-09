@@ -4,14 +4,11 @@ import prisma from "@repo/db";
 
 const SESSION_COOKIE = "am_session";
 const SESSION_DAYS = 7;
-const EMAIL_TOKEN_HOURS = 24;
-const RESET_TOKEN_MINUTES = 30;
 
 export type AuthUser = {
   id: string;
   name: string;
   email: string;
-  emailVerifiedAt: Date | null;
 };
 
 function hashToken(token: string): string {
@@ -31,8 +28,6 @@ export function publicUser(user: AuthUser) {
     id: user.id,
     name: user.name,
     email: user.email,
-    emailVerified: Boolean(user.emailVerifiedAt),
-    emailVerifiedAt: user.emailVerifiedAt,
   };
 }
 
@@ -127,81 +122,4 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   if (!user) return res.status(401).json({ error: "unauthorized" });
   res.locals.user = user;
   return next();
-}
-
-export async function requireVerifiedEmail(req: Request, res: Response, next: NextFunction) {
-  const user = (res.locals.user as AuthUser | undefined) ?? await getAuthUser(req);
-  if (!user) return res.status(401).json({ error: "unauthorized" });
-  if (!user.emailVerifiedAt) {
-    return res.status(403).json({ error: "email_not_verified" });
-  }
-  res.locals.user = user;
-  return next();
-}
-
-export async function createEmailVerificationToken(userId: string): Promise<string> {
-  const token = makeToken();
-  await prisma.emailVerificationToken.create({
-    data: {
-      userId,
-      tokenHash: hashToken(token),
-      expiresAt: addTime(EMAIL_TOKEN_HOURS * 60 * 60 * 1000),
-    },
-  });
-  return token;
-}
-
-export async function consumeEmailVerificationToken(token: string): Promise<AuthUser | null> {
-  const record = await prisma.emailVerificationToken.findUnique({
-    where: { tokenHash: hashToken(token) },
-  });
-  if (!record || record.usedAt || record.expiresAt <= new Date()) return null;
-
-  const user = await prisma.user.update({
-    where: { id: record.userId },
-    data: { emailVerifiedAt: new Date() },
-  });
-  await prisma.emailVerificationToken.update({
-    where: { id: record.id },
-    data: { usedAt: new Date() },
-  });
-  return user;
-}
-
-export async function createPasswordResetToken(userId: string): Promise<string> {
-  const token = makeToken();
-  await prisma.passwordResetToken.create({
-    data: {
-      userId,
-      tokenHash: hashToken(token),
-      expiresAt: addTime(RESET_TOKEN_MINUTES * 60 * 1000),
-    },
-  });
-  return token;
-}
-
-export async function consumePasswordResetToken(
-  token: string,
-  password: string,
-): Promise<AuthUser | null> {
-  const record = await prisma.passwordResetToken.findUnique({
-    where: { tokenHash: hashToken(token) },
-  });
-  if (!record || record.usedAt || record.expiresAt <= new Date()) return null;
-
-  const user = await prisma.user.update({
-    where: { id: record.userId },
-    data: { passwordHash: hashPassword(password) },
-  });
-  await prisma.passwordResetToken.update({
-    where: { id: record.id },
-    data: { usedAt: new Date() },
-  });
-  await prisma.session.deleteMany({ where: { userId: user.id } });
-  return user;
-}
-
-export function devLink(path: string, token: string): string {
-  const origin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
-  return `${origin}${path}?token=${encodeURIComponent(token)}`;
 }

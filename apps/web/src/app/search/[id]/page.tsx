@@ -25,7 +25,7 @@ const STATUS_COPY: Record<SearchDetail["status"], { label: string; cls: string }
 const NEG_STATUS_COPY: Record<string, { label: string; cls: string }> = {
   pending: { label: "pendiente", cls: "bg-zinc-100 text-zinc-700" },
   running: { label: "negociando", cls: "bg-blue-100 text-blue-800" },
-  accepted: { label: "deal cerrado", cls: "bg-emerald-100 text-emerald-800" },
+  accepted: { label: "cerrada", cls: "bg-emerald-100 text-emerald-800" },
   rejected: { label: "rechazada", cls: "bg-rose-100 text-rose-800" },
   timed_out: { label: "sin acuerdo", cls: "bg-zinc-100 text-zinc-700" },
   error: { label: "error", cls: "bg-rose-100 text-rose-800" },
@@ -87,7 +87,7 @@ export default function SearchPage() {
   }
 
   const statusInfo = STATUS_COPY[search.status] ?? STATUS_COPY.collecting;
-  const bestDeal = search.deals[0] ?? null;
+  const acceptedNegotiation = search.negotiations.find((n) => n.status === "accepted") ?? null;
 
   return (
     <Shell>
@@ -111,7 +111,7 @@ export default function SearchPage() {
           </div>
         </header>
 
-        {bestDeal && <DealCard search={search} />}
+        {acceptedNegotiation && <OutcomeCard negotiation={acceptedNegotiation} />}
 
         <section>
           <h2 className="mb-3 text-sm font-medium tracking-wide text-muted-foreground">
@@ -125,7 +125,7 @@ export default function SearchPage() {
                 <SkeletonCard />
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No se encontraron listings que coincidan con tu búsqueda.</p>
+              <p className="text-sm text-muted-foreground">No se encontraron productos que coincidan con tu búsqueda.</p>
             )
           ) : (
             <div className="space-y-3">
@@ -177,10 +177,7 @@ function SkeletonCard() {
   );
 }
 
-function DealCard({ search }: { search: SearchDetail }) {
-  const deal = search.deals[0]!;
-  const negotiation = search.negotiations.find((n) => n.status === "accepted");
-  const title = negotiation?.listing.title ?? "tu producto";
+function OutcomeCard({ negotiation }: { negotiation: SearchDetail["negotiations"][number] }) {
   return (
     <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-5">
       <div className="flex items-center gap-3">
@@ -190,9 +187,9 @@ function DealCard({ search }: { search: SearchDetail }) {
           </svg>
         </div>
         <div>
-          <p className="text-sm text-emerald-900/80">¡Deal cerrado!</p>
+          <p className="text-sm text-emerald-900/80">¡Negociación cerrada!</p>
           <p className="text-lg font-medium text-emerald-950">
-            {title} · {formatARS(deal.finalPrice)}
+            {negotiation.product.title} · {formatARS(negotiation.finalPrice!)}
           </p>
         </div>
       </div>
@@ -238,8 +235,8 @@ function NegotiationCard({
   }, [open, summary.id, summary.status]);
 
   const dropPct =
-    summary.finalPrice && summary.listing.askPrice > 0
-      ? Math.round(((summary.listing.askPrice - summary.finalPrice) / summary.listing.askPrice) * 100)
+    summary.finalPrice && summary.product.askPrice > 0
+      ? Math.round(((summary.product.askPrice - summary.finalPrice) / summary.product.askPrice) * 100)
       : null;
 
   return (
@@ -251,9 +248,9 @@ function NegotiationCard({
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium truncate">{summary.listing.title}</p>
+            <p className="text-sm font-medium truncate">{summary.product.title}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Pedido: {formatARS(summary.listing.askPrice)}
+              Pedido: {formatARS(summary.product.askPrice)}
               {summary.finalPrice != null && (
                 <>
                   {" "}· Cerrado: <span className="font-medium text-foreground">{formatARS(summary.finalPrice)}</span>

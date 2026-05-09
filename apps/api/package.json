@@ -9,10 +9,10 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
-    "seed": "tsx src/seed.ts",
+    "seed": "tsx src/scripts/seed-from-fb.ts",
     "scrape:fb": "tsx src/scripts/scrape-fb-marketplace.ts",
     "seed:fb": "tsx src/scripts/seed-from-fb.ts",
-    "db:setup": "pnpm --filter @repo/db exec prisma db push --skip-generate && pnpm --filter @repo/db exec prisma generate"
+    "db:setup": "pnpm --filter @repo/db exec prisma db execute --file prisma/reset-demo-schema.sql && pnpm --filter @repo/db exec prisma db execute --file prisma/enable-pgvector.sql && pnpm --filter @repo/db exec prisma db push --skip-generate && pnpm --filter @repo/db exec prisma generate && pnpm --filter @repo/db exec prisma db execute --file prisma/product-embedding-index.sql"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

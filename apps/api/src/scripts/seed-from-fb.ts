@@ -1,9 +1,10 @@
 /**
- * Read the latest data/fb-marketplace-*.json and import its listings into
+ * Read the latest data/fb-marketplace-*.json and import its products into
  * the Postgres DB so the demo has a populated catalog. Idempotent: prior
- * fb-sourced sellers + listings are wiped before insert.
+ * fb-sourced sellers + products are wiped before insert.
  *
  * Usage:
+ *   pnpm seed
  *   pnpm --filter api seed:fb
  *   pnpm --filter api seed:fb -- ./data/fb-marketplace-2026-05-09T....json
  */
@@ -11,8 +12,9 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import prisma from "@repo/db";
+import { upsertProductEmbedding } from "../services/embeddings";
 
-type ScrapedListing = {
+type ScrapedProduct = {
   category: string;
   url: string;
   title: string;
@@ -27,13 +29,12 @@ type ScrapedListing = {
 type ScrapeFile = {
   location: string;
   categories: string[];
-  listings: ScrapedListing[];
+  listings: ScrapedProduct[];
 };
 
 const DATA_DIR = path.resolve(__dirname, "..", "..", "data");
 const FB_SELLER_DOMAIN = "fb-seller.demo";
 const SELLER_POOL_SIZE = 12;
-const SEED_MULTIPLIER = 10;
 
 function pickInputFile(): string {
   const arg = process.argv[2];
@@ -58,7 +59,7 @@ async function ensureSellerPool() {
     const user = await prisma.user.upsert({
       where: { email },
       update: {},
-      create: { name: names[i] ?? `Seller ${i + 1}`, email, role: "seller" },
+      create: { name: names[i] ?? `Seller ${i + 1}`, email },
     });
     created.push(user);
   }
@@ -69,11 +70,8 @@ async function ensureSellerPool() {
 // reads the price into `title` and the real product name into `location`.
 const PRICE_LIKE = /^\s*(US\$|U\$S|USD|ARS|\$)?\s*[\d.,]+\s*$/i;
 
-function deriveListingFields(item: ScrapedListing) {
+function deriveProductFields(item: ScrapedProduct) {
   const askPrice = item.price ?? 0;
-  // Heuristic reservation prices since the scrape doesn't expose them.
-  const minPrice = Math.round(askPrice * 0.8);
-  const maxPrice = Math.round(askPrice * 1.15);
 
   // Recover from the title/location swap in the raw scrape.
   let title = item.title;
@@ -86,7 +84,12 @@ function deriveListingFields(item: ScrapedListing) {
   const description = [title, location ? `Ubicación: ${location}` : null, `Fuente: Facebook Marketplace (${item.url})`]
     .filter(Boolean)
     .join("\n");
-  return { askPrice, minPrice, maxPrice, description, title };
+  return {
+    askPrice,
+    description,
+    title,
+    negotiationStrategy: "Publicación importada de Facebook Marketplace; negociar de forma razonable alrededor del precio publicado.",
+  };
 }
 
 async function main() {
@@ -94,30 +97,36 @@ async function main() {
   console.log(`[seed:fb] leyendo ${file}`);
   const payload = JSON.parse(fs.readFileSync(file, "utf-8")) as ScrapeFile;
   const valid = payload.listings.filter((l) => l.price !== null && l.price > 0 && l.title.length > 2);
-  console.log(`[seed:fb] ${valid.length}/${payload.listings.length} listings con precio válido`);
-  console.log(`[seed:fb] multiplicador de seed: x${SEED_MULTIPLIER} (${valid.length} -> ${valid.length * SEED_MULTIPLIER})`);
+  console.log(`[seed:fb] ${valid.length}/${payload.listings.length} products con precio válido`);
 
   const sellers = await ensureSellerPool();
   const sellerIds = sellers.map((s) => s.id);
 
-  // Wipe prior fb-sourced listings so the seed is idempotent.
-  const wiped = await prisma.listing.deleteMany({ where: { sellerId: { in: sellerIds } } });
-  console.log(`[seed:fb] borrados ${wiped.count} listings previos`);
+  // Wipe prior fb-sourced products so the seed is idempotent.
+  const existingProducts = await prisma.product.findMany({
+    where: { userId: { in: sellerIds } },
+    select: { id: true },
+  });
+  const productIds = existingProducts.map((product) => product.id);
+  await prisma.negotiationMessage.deleteMany({
+    where: { negotiation: { productId: { in: productIds } } },
+  });
+  await prisma.negotiation.deleteMany({ where: { productId: { in: productIds } } });
+  await prisma.productEmbedding.deleteMany({ where: { productId: { in: productIds } } });
+  const wiped = await prisma.product.deleteMany({ where: { userId: { in: sellerIds } } });
+  console.log(`[seed:fb] borrados ${wiped.count} products previos`);
 
-  const seedItems = Array.from({ length: SEED_MULTIPLIER }, () => valid).flat();
-  const rows = seedItems.map((item, i) => {
+  const rows = valid.map((item, i) => {
     const seller = sellers[i % sellers.length]!;
-    const { askPrice, minPrice, maxPrice, description, title } = deriveListingFields(item);
+    const { askPrice, description, title, negotiationStrategy } = deriveProductFields(item);
     return {
-      sellerId: seller.id,
+      userId: seller.id,
       title: title.slice(0, 200),
       description,
       category: item.category,
       condition: null,
       askPrice,
-      minPrice,
-      maxPrice,
-      strategyNotes: null,
+      negotiationStrategy,
       imageUrl: item.imageUrl,
     };
   });
@@ -127,8 +136,14 @@ async function main() {
     return;
   }
 
-  const result = await prisma.listing.createMany({ data: rows });
-  console.log(`[seed:fb] insertados ${result.count} listings`);
+  let count = 0;
+  for (const row of rows) {
+    const product = await prisma.product.create({ data: row });
+    await upsertProductEmbedding(product.id, product);
+    count += 1;
+  }
+
+  console.log(`[seed:fb] insertados ${count} products`);
   const byCat: Record<string, number> = {};
   for (const r of rows) byCat[r.category!] = (byCat[r.category!] ?? 0) + 1;
   console.log("[seed:fb] por categoría:", byCat);

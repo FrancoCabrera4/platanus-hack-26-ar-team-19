@@ -9,17 +9,17 @@ export interface RunSearchJobPayload {
 }
 
 export interface RunSearchJobResult {
-  matches: { listingId: string; score: number; rationale: string }[];
+  matches: { productId: string; score: number; rationale: string }[];
   negotiations: {
-    listingId: string;
+    productId: string;
     negotiationId: string;
     status: string;
+    successful: boolean;
     finalPrice: number | null;
-    dealId?: string;
   }[];
-  bestDeal: {
-    dealId: string;
-    listingId: string;
+  successfulNegotiation: {
+    negotiationId: string;
+    productId: string;
     finalPrice: number;
   } | null;
 }
@@ -88,40 +88,47 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
 
   const matches = await findMatches(payload.searchId, payload.topN ?? 5);
 
+  const search = await prisma.buyerSearch.findUnique({ where: { id: payload.searchId } });
+  if (!search) throw new Error(`Search ${payload.searchId} not found`);
+
   // Phase 1: Create all negotiations as "pending" so the frontend can show
   // the matched products (with images) before any negotiation starts.
-  const pendingNegs: { listingId: string; negotiationId: string }[] = [];
+  const pendingNegs: { productId: string; negotiationId: string }[] = [];
   for (const m of matches) {
+    const product = await prisma.product.findUnique({ where: { id: m.productId } });
+    if (!product) continue;
+
     const neg = await prisma.negotiation.create({
       data: {
         searchId: payload.searchId,
-        listingId: m.listingId,
+        productId: m.productId,
+        buyerId: search.buyerId,
+        sellerId: product.userId,
         status: "pending",
       },
     });
-    pendingNegs.push({ listingId: m.listingId, negotiationId: neg.id });
+    pendingNegs.push({ productId: m.productId, negotiationId: neg.id });
   }
 
   // Phase 2: Negotiate sequentially now that all matches are visible.
   const negotiations: RunSearchJobResult["negotiations"] = [];
-  let bestDeal: { dealId: string; listingId: string; finalPrice: number } | null = null;
+  let successfulNegotiation: RunSearchJobResult["successfulNegotiation"] = null;
 
   for (const pn of pendingNegs) {
-    const result = await runNegotiation(payload.searchId, pn.listingId);
+    const result = await runNegotiation(payload.searchId, pn.productId);
     negotiations.push({
-      listingId: pn.listingId,
+      productId: pn.productId,
       negotiationId: result.negotiationId,
       status: result.status,
+      successful: result.successful,
       finalPrice: result.finalPrice,
-      dealId: result.dealId,
     });
-    if (result.status === "accepted" && result.dealId && result.finalPrice != null) {
-      bestDeal = {
-        dealId: result.dealId,
-        listingId: pn.listingId,
+    if (!successfulNegotiation && result.status === "accepted" && result.finalPrice !== null) {
+      successfulNegotiation = {
+        negotiationId: result.negotiationId,
+        productId: pn.productId,
         finalPrice: result.finalPrice,
       };
-      break;
     }
   }
 
@@ -130,5 +137,5 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
     data: { status: "completed" },
   });
 
-  return { matches, negotiations, bestDeal };
+  return { matches, negotiations, successfulNegotiation };
 }

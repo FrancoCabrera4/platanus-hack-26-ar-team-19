@@ -26,6 +26,33 @@
   animation: thinking-pulse 1.2s ease-in-out infinite;
 }
 
+@keyframes status-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-status {
+  animation: status-fade 0.3s ease-out both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out both;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.3s ease-out both;
+}
+
 .liquid-glass {
   background: rgba(255, 255, 255, 0.35);
   backdrop-filter: blur(40px) saturate(2.5) brightness(1.1);

@@ -22,7 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Page } from "playwright";
 
-type ScrapedListing = {
+type ScrapedProduct = {
   category: string;
   url: string;
   title: string;
@@ -96,7 +96,7 @@ async function autoScroll(page: Page, rounds: number) {
   }
 }
 
-async function scrapeCategory(page: Page, category: string): Promise<ScrapedListing[]> {
+async function scrapeCategory(page: Page, category: string): Promise<ScrapedProduct[]> {
   const url = `https://www.facebook.com/marketplace/${LOCATION}/${category}/`;
   console.log(`[scrape] ${category} → ${url}`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -122,7 +122,7 @@ async function scrapeCategory(page: Page, category: string): Promise<ScrapedList
   });
 
   const scrapedAt = new Date().toISOString();
-  const listings: ScrapedListing[] = [];
+  const listings: ScrapedProduct[] = [];
   for (const item of raw.slice(0, MAX_PER_CAT)) {
     const lines = item.text.split("\n").map((s) => s.trim()).filter(Boolean);
     if (lines.length === 0) continue;
@@ -161,7 +161,7 @@ async function main() {
     });
     const page = await context.newPage();
 
-    const all: ScrapedListing[] = [];
+    const all: ScrapedProduct[] = [];
     for (const cat of CATEGORIES) {
       try {
         const items = await scrapeCategory(page, cat);

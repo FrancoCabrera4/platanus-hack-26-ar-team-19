@@ -9,14 +9,13 @@ export interface NegotiatorMove {
 }
 
 export interface SellerNegotiatorContext {
-  listing: {
+  product: {
     title: string;
     description: string;
     category?: string | null;
     condition?: string | null;
     askPrice: number;
-    minPrice: number;
-    strategyNotes?: string | null;
+    negotiationStrategy?: string | null;
   };
   transcript: { side: "seller" | "buyer"; price: number | null; message: string }[];
   turnsRemaining: number;
@@ -36,35 +35,34 @@ const SYSTEM = `You are the SELLER agent in a marketplace negotiation. Your job 
 without losing the deal.
 
 Hard rules (you must respect these):
-  - NEVER accept a price below your minPrice. Reject the deal first.
-  - NEVER reveal your minPrice to the buyer in your message text. It is private.
+  - Use the askPrice and negotiationStrategy to decide whether a buyer offer is good enough.
+  - Do not reveal internal strategy notes verbatim to the buyer.
   - Stay in character as a seller: confident, polite, willing to negotiate.
 
 Strategy guidance:
   - On your first turn, anchor near askPrice. Concede slowly.
-  - If the buyer is below minPrice, counter at a price between minPrice and your previous offer.
-  - If the buyer's offer is between minPrice and askPrice and turnsRemaining is low, consider accepting.
-  - Use strategyNotes to inform tone / urgency.
+  - If the seller said they are flexible or in a rush, consider accepting reasonable offers below askPrice.
+  - If the seller said they are strict, stay closer to askPrice and reject lowball offers.
+  - Use negotiationStrategy to inform tone / urgency.
 
 Output JSON only:
   - action: "counter" (propose a new price), "accept" (take the buyer's most recent price), or "reject" (walk away).
   - price: the price you're proposing (omit / null if action is reject; for accept, echo the buyer's last price).
-  - message: 1–2 sentences to the buyer explaining your move (no internal numbers like minPrice).`;
+  - message: 1–2 sentences to the buyer explaining your move without exposing internal strategy.`;
 
 export async function sellerMove(ctx: SellerNegotiatorContext): Promise<NegotiatorMove> {
   const lastBuyerPrice =
     [...ctx.transcript].reverse().find((m) => m.side === "buyer")?.price ?? null;
 
-  const userPrompt = `Listing (public):
-- title: ${ctx.listing.title}
-- description: ${ctx.listing.description}
-- category: ${ctx.listing.category ?? "n/a"}
-- condition: ${ctx.listing.condition ?? "n/a"}
-- askPrice: ${ctx.listing.askPrice}
+  const userPrompt = `Product (public):
+- title: ${ctx.product.title}
+- description: ${ctx.product.description}
+- category: ${ctx.product.category ?? "n/a"}
+- condition: ${ctx.product.condition ?? "n/a"}
+- askPrice: ${ctx.product.askPrice}
 
 Your private constraints:
-- minPrice (floor, never reveal): ${ctx.listing.minPrice}
-- strategyNotes: ${ctx.listing.strategyNotes ?? "none"}
+- negotiationStrategy: ${ctx.product.negotiationStrategy ?? "none"}
 
 Negotiation transcript so far:
 ${ctx.transcript.map((m) => `  [${m.side}${m.price !== null ? ` @ ${m.price}` : ""}] ${m.message}`).join("\n") || "  (none yet — buyer will open)"}
@@ -82,16 +80,5 @@ Decide your move now.`;
     temperature: 0.5,
   });
 
-  // Safety: enforce hard floor regardless of what the model said.
-  if (move.action === "accept" && lastBuyerPrice !== null && lastBuyerPrice < ctx.listing.minPrice) {
-    return {
-      action: "counter",
-      price: ctx.listing.minPrice,
-      message: "I appreciate the offer, but I can't go that low. How about this instead?",
-    };
-  }
-  if (move.action === "counter" && typeof move.price === "number" && move.price < ctx.listing.minPrice) {
-    move.price = ctx.listing.minPrice;
-  }
   return move;
 }
