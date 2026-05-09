@@ -4,6 +4,11 @@ import { log } from "@repo/logger";
 import { generateJSON } from "../llm/gemini";
 import { embedText, toVectorLiteral } from "./embeddings";
 import { verifyProductMatch } from "./vision";
+import {
+  checkCandidates,
+  getCategoryAverages,
+  verifyPriceWithMarket,
+} from "./fraud";
 
 export interface MatchCandidate {
   productId: string;
@@ -242,7 +247,17 @@ export async function findMatches(
     candidates = mergeCandidates(fallbackOrig, fallbackExp);
   }
 
-  log(`[matching] Found ${candidates.length} candidates after retrieval`);
+  // Fraud filter — remove suspicious products before scoring
+  const categoryAverages = await getCategoryAverages();
+  const { passed, blocked } = checkCandidates(candidates, categoryAverages);
+  if (blocked.length > 0) {
+    log(`[matching] Fraud filter blocked ${blocked.length} candidates`);
+  }
+  candidates = passed;
+
+  log(
+    `[matching] ${candidates.length} candidates after retrieval + fraud filter`,
+  );
 
   if (candidates.length === 0) return [];
   if (candidates.length === 1) {
@@ -345,6 +360,8 @@ Return ALL candidates scored, sorted by score descending.`,
 
   textRanked = await visionRerank(textRanked, candidateMap, buyerDescription);
 
+  const qualityFiltered = textRanked.filter((m) => m.score >= minScore);
+
   log(
     `[matching] Final ranking: ${textRanked
       .slice(0, topN)
@@ -352,7 +369,33 @@ Return ALL candidates scored, sorted by score descending.`,
       .join(", ")}`,
   );
 
-  return textRanked.slice(0, topN);
+  // Step 6: Market price verification — flag suspiciously cheap products
+  const verified: MatchCandidate[] = [];
+  for (const match of qualityFiltered.slice(0, topN)) {
+    const candidate = candidateMap.get(match.productId);
+    if (!candidate) {
+      verified.push(match);
+      continue;
+    }
+
+    const marketCheck = await verifyPriceWithMarket(
+      candidate.title,
+      candidate.askPrice,
+    );
+    if (marketCheck?.suspicious) {
+      log(
+        `[matching] Market price fraud: "${candidate.title}" — ${marketCheck.reason}`,
+      );
+      continue;
+    }
+    verified.push(match);
+  }
+
+  log(
+    `[matching] Final: ${textRanked.length} scored, ${qualityFiltered.length} quality, ${verified.length} verified`,
+  );
+
+  return verified;
 }
 
 // --- Price-aware scoring ---

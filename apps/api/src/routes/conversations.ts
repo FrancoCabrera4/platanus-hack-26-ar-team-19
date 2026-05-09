@@ -17,6 +17,7 @@ import type { ChatTurn } from "../llm/gemini";
 import { embedText, toVectorLiteral, upsertProductEmbedding } from "../services/embeddings";
 import { analyzeProductImage, analyzeSearchImage } from "../services/vision";
 import { getPriceReference, type MLPriceRef } from "../services/mercadolibre";
+import { checkProduct } from "../services/fraud";
 import { requireAuth, type AuthUser } from "../auth";
 import { asyncHandler, sseHeaders, sseSend } from "./_sse";
 
@@ -111,10 +112,11 @@ async function runTurnWithContext(
   onChunk?: (text: string) => void,
 ) {
   if (mode === "buying") {
+    const inv = await getInventorySummary().catch(() => undefined);
     if (onChunk) {
-      return streamBuyerOnboardingTurn(history, state as BuyerSearchDraft, onChunk);
+      return streamBuyerOnboardingTurn(history, state as BuyerSearchDraft, onChunk, inv);
     }
-    return runBuyerOnboardingTurn(history, state as BuyerSearchDraft);
+    return runBuyerOnboardingTurn(history, state as BuyerSearchDraft, inv);
   }
 
   const mlContext = mlData ? buildMLContext(mlData) : undefined;
@@ -149,6 +151,26 @@ async function completeConversation(
       !productState.negotiationStrategy ||
       !productState.imageUrl
     ) {
+      return {};
+    }
+
+    const fraudResult = await checkProduct({
+      title: productState.title,
+      description: productState.description,
+      askPrice: productState.askPrice,
+      category: productState.category ?? null,
+      userId,
+    }).catch((err) => {
+      log("Fraud check failed:", (err as Error).message);
+      return null;
+    });
+
+    if (fraudResult && !fraudResult.safe) {
+      log(`[fraud] Blocked product creation: "${productState.title}" — ${fraudResult.flags.map((f) => f.rule).join(", ")}`);
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: "in_progress" },
+      });
       return {};
     }
 
@@ -213,6 +235,37 @@ async function completeConversation(
 
   const jobId = await enqueueRunSearch({ searchId: search.id });
   return { searchId: search.id, jobId };
+}
+
+let inventoryCache: string | null = null;
+let inventoryCacheTs = 0;
+const INVENTORY_CACHE_TTL = 60_000;
+
+async function getInventorySummary(): Promise<string> {
+  if (inventoryCache && Date.now() - inventoryCacheTs < INVENTORY_CACHE_TTL) return inventoryCache;
+
+  const rows = await prisma.$queryRaw<{ category: string; cnt: bigint; minPrice: number; maxPrice: number; avgPrice: number }[]>`
+    SELECT "category", COUNT(*) as cnt,
+           MIN("askPrice") as "minPrice", MAX("askPrice") as "maxPrice", ROUND(AVG("askPrice")) as "avgPrice"
+    FROM "Product"
+    WHERE "status" = 'active' AND "category" IS NOT NULL
+    GROUP BY "category"
+    ORDER BY cnt DESC
+  `;
+
+  if (rows.length === 0) {
+    inventoryCache = "INVENTARIO: El marketplace está vacío por ahora.";
+    inventoryCacheTs = Date.now();
+    return inventoryCache;
+  }
+
+  const lines = rows.map((r) =>
+    `  - ${r.category}: ${Number(r.cnt)} productos ($${Number(r.minPrice).toLocaleString("es-AR")} – $${Number(r.maxPrice).toLocaleString("es-AR")}, promedio $${Number(r.avgPrice).toLocaleString("es-AR")})`,
+  );
+  const total = rows.reduce((s, r) => s + Number(r.cnt), 0);
+  inventoryCache = `INVENTARIO ACTUAL DEL MARKETPLACE (${total} productos activos):\n${lines.join("\n")}`;
+  inventoryCacheTs = Date.now();
+  return inventoryCache;
 }
 
 const LOCAL_THRESHOLD = 10;
