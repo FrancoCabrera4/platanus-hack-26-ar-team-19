@@ -512,7 +512,7 @@ export default function ExplorePage() {
                   <div key={i} className="animate-msg-in" style={{ animationDelay: `${i * 0.05}s` }}>
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
-                        <div className="bg-primary text-primary-foreground px-4 py-2 rounded-2xl rounded-br-md max-w-[75%]">
+                        <div className="bg-primary/20 text-amber-900 px-4 py-2 rounded-2xl rounded-br-md max-w-[75%]">
                           <p className="text-sm">{msg.content}</p>
                         </div>
                       </div>
