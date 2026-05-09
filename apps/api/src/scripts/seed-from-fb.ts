@@ -47,6 +47,20 @@ type ProductSeedRow = {
 const DATA_DIR = path.resolve(__dirname, "..", "..", "data");
 const FB_SELLER_DOMAIN = "fb-seller.demo";
 const SELLER_POOL_SIZE = 12;
+const MOCK_SELLER_ZONES = [
+  "Palermo, CABA",
+  "Caballito, CABA",
+  "Belgrano, CABA",
+  "Villa Crespo, CABA",
+  "San Telmo, CABA",
+  "Vicente Lopez, Buenos Aires",
+  "San Isidro, Buenos Aires",
+  "Moron, Buenos Aires",
+  "Quilmes, Buenos Aires",
+  "Lanus, Buenos Aires",
+  "Lomas de Zamora, Buenos Aires",
+  "La Plata, Buenos Aires",
+];
 
 function pickInputFile(): string {
   const arg = process.argv[2];
@@ -68,10 +82,15 @@ async function ensureSellerPool() {
   const created = [];
   for (let i = 0; i < SELLER_POOL_SIZE; i++) {
     const email = `seller${i + 1}@${FB_SELLER_DOMAIN}`;
+    const location = MOCK_SELLER_ZONES[i]!;
     const user = await prisma.user.upsert({
       where: { email },
-      update: {},
-      create: { name: names[i] ?? `Seller ${i + 1}`, email },
+      update: { location },
+      create: {
+        name: names[i] ?? `Seller ${i + 1}`,
+        email,
+        location,
+      },
     });
     created.push(user);
   }

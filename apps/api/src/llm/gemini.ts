@@ -41,20 +41,39 @@ function parseProvider(value: string | undefined): LlmProvider {
   const normalised = value?.toLowerCase();
   if (normalised === "gemini" || normalised === "openai") return normalised;
   if (value) {
-    log(`WARN: Unsupported LLM_PROVIDER="${value}". Falling back to auto-detect.`);
+    log(
+      `WARN: Unsupported LLM_PROVIDER="${value}". Falling back to auto-detect.`,
+    );
   }
   return openAiApiKey ? "openai" : "gemini";
+}
+
+function schemaHasProperty(
+  schema: object | undefined,
+  property: string,
+): boolean {
+  if (!schema || typeof schema !== "object") return false;
+  const properties = (schema as { properties?: Record<string, unknown> })
+    .properties;
+  return (
+    !!properties && Object.prototype.hasOwnProperty.call(properties, property)
+  );
 }
 
 function buildSystemContent(opts: GenerateOptions): string {
   let systemContent = opts.system ?? "";
   if (opts.jsonSchema) {
-    systemContent += `\n\nYou MUST respond with valid JSON matching this exact schema:\n${JSON.stringify(opts.jsonSchema, null, 2)}\n\nIMPORTANT: Put the "reply" field FIRST in your JSON response.\nRespond ONLY with the JSON object, no extra text.`;
+    const replyInstruction = schemaHasProperty(opts.jsonSchema, "reply")
+      ? '\n\nIMPORTANT: Put the "reply" field FIRST in your JSON response.'
+      : "";
+    systemContent += `\n\nYou MUST respond with valid JSON matching this exact schema:\n${JSON.stringify(opts.jsonSchema, null, 2)}${replyInstruction}\nRespond ONLY with the JSON object, no extra text.`;
   }
   return systemContent;
 }
 
-function buildOpenAiMessages(opts: GenerateOptions): OpenAI.ChatCompletionMessageParam[] {
+function buildOpenAiMessages(
+  opts: GenerateOptions,
+): OpenAI.ChatCompletionMessageParam[] {
   const messages: OpenAI.ChatCompletionMessageParam[] = [];
 
   const systemContent = buildSystemContent(opts);
@@ -102,10 +121,9 @@ function toGeminiSchema(schema: unknown): ResponseSchema {
     }
     if (key === "properties" && value && typeof value === "object") {
       output.properties = Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).map(([prop, propSchema]) => [
-          prop,
-          toGeminiSchema(propSchema),
-        ]),
+        Object.entries(value as Record<string, unknown>).map(
+          ([prop, propSchema]) => [prop, toGeminiSchema(propSchema)],
+        ),
       );
       continue;
     }
@@ -119,12 +137,37 @@ function toGeminiSchema(schema: unknown): ResponseSchema {
   return output as unknown as ResponseSchema;
 }
 
-function normalizeResult(parsed: Record<string, unknown>) {
-  if (parsed.reply === undefined && parsed.response) parsed.reply = parsed.response;
-  if (parsed.reply === undefined && parsed.message) parsed.reply = parsed.message;
-  if (parsed.reply === undefined) parsed.reply = "¿Podrías darme más detalles?";
-  if (parsed.state === undefined) parsed.state = {};
-  if (parsed.done === undefined) parsed.done = false;
+function normalizeResult(
+  parsed: Record<string, unknown>,
+  schema?: object,
+): Record<string, unknown> {
+  const schemaWantsReply = schemaHasProperty(schema, "reply");
+
+  // Some models follow the generic "reply" hint too literally and wrap schemas
+  // that do not have a reply field, e.g. { reply: { action, price, message } }.
+  // Unwrap that shape for non-chat structured calls such as negotiators.
+  if (
+    !schemaWantsReply &&
+    parsed.reply &&
+    typeof parsed.reply === "object" &&
+    !Array.isArray(parsed.reply)
+  ) {
+    return parsed.reply as Record<string, unknown>;
+  }
+
+  if (schemaWantsReply) {
+    if (parsed.reply === undefined && parsed.response)
+      parsed.reply = parsed.response;
+    if (parsed.reply === undefined && parsed.message)
+      parsed.reply = parsed.message;
+    if (parsed.reply === undefined)
+      parsed.reply = "¿Podrías darme más detalles?";
+  }
+  if (schemaHasProperty(schema, "state") && parsed.state === undefined)
+    parsed.state = {};
+  if (schemaHasProperty(schema, "done") && parsed.done === undefined)
+    parsed.done = false;
+  return parsed;
 }
 
 class ReplyExtractor {
@@ -222,15 +265,19 @@ export async function generateJSON<T>(opts: GenerateOptions): Promise<T> {
   if (!opts.jsonSchema) {
     throw new Error("generateJSON requires a jsonSchema");
   }
-  const text = await generate({ ...opts, temperature: opts.temperature ?? 0.4 });
+  const text = await generate({
+    ...opts,
+    temperature: opts.temperature ?? 0.4,
+  });
   log("LLM raw response:", text);
   try {
-    const parsed = JSON.parse(text);
-    normalizeResult(parsed);
-    return parsed as T;
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return normalizeResult(parsed, opts.jsonSchema) as T;
   } catch (err) {
     log(`${provider} returned invalid JSON:`, text);
-    throw new Error(`Failed to parse ${provider} JSON response: ${(err as Error).message}`);
+    throw new Error(
+      `Failed to parse ${provider} JSON response: ${(err as Error).message}`,
+    );
   }
 }
 
@@ -279,9 +326,8 @@ async function generateOpenAiStreamJSON<T>(
 
   log("LLM raw streamed response:", fullText);
   try {
-    const parsed = JSON.parse(fullText);
-    normalizeResult(parsed);
-    return parsed as T;
+    const parsed = JSON.parse(fullText) as Record<string, unknown>;
+    return normalizeResult(parsed, opts.jsonSchema) as T;
   } catch (err) {
     log("openai returned invalid JSON (stream):", fullText);
     throw new Error(`Failed to parse streamed JSON: ${(err as Error).message}`);
@@ -322,9 +368,8 @@ async function generateGeminiStreamJSON<T>(
 
   log("LLM raw streamed response:", fullText);
   try {
-    const parsed = JSON.parse(fullText);
-    normalizeResult(parsed);
-    return parsed as T;
+    const parsed = JSON.parse(fullText) as Record<string, unknown>;
+    return normalizeResult(parsed, opts.jsonSchema) as T;
   } catch (err) {
     log("gemini returned invalid JSON (stream):", fullText);
     throw new Error(`Failed to parse streamed JSON: ${(err as Error).message}`);

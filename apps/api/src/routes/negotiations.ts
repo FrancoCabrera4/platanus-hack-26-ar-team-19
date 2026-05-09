@@ -6,6 +6,22 @@ export const negotiationsRouter: RouterType = Router();
 
 negotiationsRouter.use(requireAuth);
 
+function serializeCoordinationMessage(message: {
+  id: string;
+  negotiationId: string;
+  side: string;
+  content: string;
+  createdAt: Date;
+}) {
+  return {
+    id: message.id,
+    negotiationId: message.negotiationId,
+    side: message.side,
+    content: message.content,
+    createdAt: message.createdAt,
+  };
+}
+
 negotiationsRouter.get("/", async (_req, res) => {
   const user = res.locals.user as AuthUser;
   const negotiations = await prisma.negotiation.findMany({
@@ -42,6 +58,15 @@ negotiationsRouter.get("/", async (_req, res) => {
       buyer: neg.buyer,
       seller: neg.seller,
       product: neg.product,
+      midpoint: neg.midpointLabel
+        ? {
+            midpointLabel: neg.midpointLabel,
+            rationale: neg.midpointRationale ?? "",
+            meetingTips: (() => {
+              try { return JSON.parse(neg.midpointTips ?? "[]"); } catch { return []; }
+            })(),
+          }
+        : null,
     })),
   );
 });
@@ -60,6 +85,64 @@ negotiationsRouter.get("/:id", async (req, res) => {
   if (neg.search.buyerId !== user.id)
     return res.status(403).json({ error: "not_the_owner" });
   return res.json(neg);
+});
+
+negotiationsRouter.get("/:id/coordination-messages", async (req, res) => {
+  const user = res.locals.user as AuthUser;
+  const neg = await prisma.negotiation.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, buyerId: true, sellerId: true, status: true },
+  });
+
+  if (!neg) return res.status(404).json({ error: "negotiation not found" });
+  if (neg.buyerId !== user.id && neg.sellerId !== user.id) {
+    return res.status(403).json({ error: "not_the_owner" });
+  }
+  if (neg.status !== "accepted") {
+    return res.status(409).json({ error: "deal_not_accepted" });
+  }
+
+  const messages = await prisma.negotiationMessage.findMany({
+    where: { negotiationId: neg.id, action: "coordinate" },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return res.json(messages.map(serializeCoordinationMessage));
+});
+
+negotiationsRouter.post("/:id/coordination-messages", async (req, res) => {
+  const user = res.locals.user as AuthUser;
+  const content =
+    typeof req.body?.content === "string" ? req.body.content.trim() : "";
+
+  if (!content) return res.status(400).json({ error: "missing_content" });
+  if (content.length > 1000) {
+    return res.status(400).json({ error: "content_too_long" });
+  }
+
+  const neg = await prisma.negotiation.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, buyerId: true, sellerId: true, status: true },
+  });
+
+  if (!neg) return res.status(404).json({ error: "negotiation not found" });
+  if (neg.buyerId !== user.id && neg.sellerId !== user.id) {
+    return res.status(403).json({ error: "not_the_owner" });
+  }
+  if (neg.status !== "accepted") {
+    return res.status(409).json({ error: "deal_not_accepted" });
+  }
+
+  const message = await prisma.negotiationMessage.create({
+    data: {
+      negotiationId: neg.id,
+      side: neg.buyerId === user.id ? "buyer" : "seller",
+      action: "coordinate",
+      content,
+    },
+  });
+
+  return res.status(201).json(serializeCoordinationMessage(message));
 });
 
 // POST /negotiations/:id/accept - buyer confirms an awaiting_buyer agreement.

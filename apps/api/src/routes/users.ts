@@ -6,8 +6,9 @@ import { publicUser } from "../auth";
 export const usersRouter: RouterType = Router();
 
 const CreateUser = z.object({
-  name: z.string().min(1),
+  name: z.string().trim().min(1),
   email: z.string().email(),
+  location: z.string().trim().min(1).optional(),
 });
 
 usersRouter.post("/", async (req, res) => {

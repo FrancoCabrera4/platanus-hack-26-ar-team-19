@@ -14,6 +14,7 @@ model User {
   id           String   @id @default(uuid())
   name         String
   email        String   @unique
+  location     String?
   passwordHash String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -150,6 +151,9 @@ model Negotiation {
   successful  Boolean   @default(false)
   finalPrice  Float?
   reason      String?
+  midpointLabel     String?
+  midpointRationale String?
+  midpointTips      String?   // JSON array of strings
   startedAt   DateTime?
   completedAt DateTime?
   createdAt   DateTime  @default(now())

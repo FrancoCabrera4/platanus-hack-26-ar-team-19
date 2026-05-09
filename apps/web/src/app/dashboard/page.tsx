@@ -1,14 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   getMe,
+  listCoordinationMessages,
   listDashboardDeals,
   logout,
+  sendCoordinationMessage as sendCoordinationMessageRequest,
   suggestShipping,
+  updateMyLocation,
   type AuthUser,
+  type CoordinationMessage,
   type DashboardDeal,
   type ShippingSuggestion,
 } from "@/lib/api";
@@ -194,8 +198,12 @@ export default function DashboardPage() {
         </section>
 
         <section>
-          {selectedDeal ? (
-            <DealDetail deal={selectedDeal} />
+          {selectedDeal && user ? (
+            <DealDetail
+              deal={selectedDeal}
+              currentUser={user}
+              onUserChange={setUser}
+            />
           ) : (
             <div className="flex min-h-[520px] items-center justify-center rounded-lg border border-border bg-background p-8 text-center">
               <div>
@@ -292,7 +300,15 @@ function DealListItem({
   );
 }
 
-function DealDetail({ deal }: { deal: DashboardDeal }) {
+function DealDetail({
+  deal,
+  currentUser,
+  onUserChange,
+}: {
+  deal: DashboardDeal;
+  currentUser: AuthUser;
+  onUserChange: (user: AuthUser) => void;
+}) {
   const counterparty = deal.role === "buyer" ? deal.seller : deal.buyer;
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-background">
@@ -352,7 +368,11 @@ function DealDetail({ deal }: { deal: DashboardDeal }) {
           )}
         </div>
       </div>
-      <ShippingAssistant deal={deal} />
+      <ShippingAssistant
+        deal={deal}
+        currentUser={currentUser}
+        onUserChange={onUserChange}
+      />
     </div>
   );
 }
@@ -366,38 +386,168 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ShippingAssistant({ deal }: { deal: DashboardDeal }) {
-  const [buyerLocation, setBuyerLocation] = useState("");
-  const [sellerLocation, setSellerLocation] = useState("");
-  const [suggestion, setSuggestion] = useState<ShippingSuggestion | null>(null);
+function ShippingAssistant({
+  deal,
+  currentUser,
+  onUserChange,
+}: {
+  deal: DashboardDeal;
+  currentUser: AuthUser;
+  onUserChange: (user: AuthUser) => void;
+}) {
+  const [locationDraft, setLocationDraft] = useState(currentUser.location ?? "");
+  const [suggestion, setSuggestion] = useState<ShippingSuggestion | null>(deal.midpoint);
   const [loading, setLoading] = useState(false);
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [detectingLocation, setDetectingLocation] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canSuggest = buyerLocation.trim() && sellerLocation.trim();
+  const [chatMessages, setChatMessages] = useState<CoordinationMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [messageDraft, setMessageDraft] = useState("");
+  const accountLocation = currentUser.location?.trim() ?? "";
+  const canSuggest = accountLocation || locationDraft.trim();
+  const userRoleLabel = deal.role === "buyer" ? "comprador" : "vendedor";
+  const meetingTips = suggestion?.meetingTips ?? [];
+  const counterparty = deal.role === "buyer" ? deal.seller : deal.buyer;
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Scroll chat to bottom when messages change
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
 
   useEffect(() => {
-    setBuyerLocation("");
-    setSellerLocation("");
-    setSuggestion(null);
+    setLocationDraft(currentUser.location ?? "");
+    setSuggestion(deal.midpoint);
+    setMessageDraft("");
     setError(null);
+  }, [deal.id, deal.midpoint, currentUser.location]);
+
+  const fetchMessages = useCallback(async () => {
+    try {
+      const messages = await listCoordinationMessages(deal.id);
+      setChatMessages(messages);
+    } catch {
+      // silent fail for polling
+    }
   }, [deal.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMessages() {
+      setChatLoading(true);
+      try {
+        const messages = await listCoordinationMessages(deal.id);
+        if (!cancelled) setChatMessages(messages);
+      } catch {
+        if (!cancelled) setChatMessages([]);
+      } finally {
+        if (!cancelled) setChatLoading(false);
+      }
+    }
+
+    void loadMessages();
+
+    // Auto-reload chat messages every 5 seconds
+    pollingRef.current = setInterval(() => {
+      if (!cancelled) void fetchMessages();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, [deal.id, fetchMessages]);
+
+  function handleDetectLocation() {
+    if (!navigator.geolocation || detectingLocation) {
+      setError("Tu navegador no permite detectar la ubicación automáticamente.");
+      return;
+    }
+
+    setDetectingLocation(true);
+    setError(null);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = position.coords.latitude.toFixed(5);
+        const longitude = position.coords.longitude.toFixed(5);
+        setLocationDraft(`Ubicación actual (${latitude}, ${longitude})`);
+        setDetectingLocation(false);
+      },
+      () => {
+        setError("No pude detectar tu ubicación. Podés escribir una zona aproximada.");
+        setDetectingLocation(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
+  }
 
   async function handleSuggest() {
     if (!canSuggest || loading) return;
     setLoading(true);
     setError(null);
     try {
+      let nextLocation = accountLocation;
+      if (!nextLocation) {
+        setSavingLocation(true);
+        const response = await updateMyLocation(locationDraft);
+        onUserChange(response.user);
+        nextLocation = response.user.location ?? "";
+        setSavingLocation(false);
+      }
+
       const nextSuggestion = await suggestShipping({
         negotiationId: deal.id,
-        buyerLocation,
-        sellerLocation,
+        userLocation: nextLocation,
       });
       setSuggestion(nextSuggestion);
+      if (chatMessages.length === 0) {
+        setMessageDraft(
+          `Hola ${counterparty.name}, negocIA sugiere encontrarnos en ${nextSuggestion.midpointLabel}. Te queda cómodo?`,
+        );
+      }
     } catch {
       setError("No se pudo generar la sugerencia de envío.");
     } finally {
+      setSavingLocation(false);
       setLoading(false);
     }
   }
+
+  async function sendCoordinationMessage(content: string) {
+    const trimmed = content.trim();
+    if (!trimmed || sendingMessage) return;
+
+    setSendingMessage(true);
+    setError(null);
+    try {
+      const message = await sendCoordinationMessageRequest(deal.id, trimmed);
+      setChatMessages((messages) => [...messages, message]);
+      setMessageDraft("");
+    } catch {
+      setError("No se pudo enviar el mensaje de coordinación.");
+    } finally {
+      setSendingMessage(false);
+    }
+  }
+
+  function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendCoordinationMessage(messageDraft);
+  }
+
+  const quickMessages = suggestion
+    ? [
+        `Me sirve ${suggestion.midpointLabel}. Podés hoy?`,
+        "Prefiero un lugar transitado y con buena luz.",
+        "Te parece confirmar punto exacto y horario antes de salir?",
+      ]
+    : [];
 
   return (
     <div className="grid gap-0 lg:grid-cols-[1fr_320px]">
@@ -405,11 +555,12 @@ function ShippingAssistant({ deal }: { deal: DashboardDeal }) {
         <h3 className="text-lg font-medium">Asistente de envio</h3>
         <div className="mt-4 space-y-3">
           <ChatBubble side="assistant">
-            Para coordinar la entrega necesito la ubicación aproximada de ambas
-            partes. Puede ser barrio, zona o una referencia.
+            Para coordinar la entrega necesito tu ubicación aproximada como{" "}
+            {userRoleLabel}. Puede ser barrio, zona o tu ubicación actual.
           </ChatBubble>
           <ChatBubble side="assistant">
-            Comprador: {deal.buyer.name}. Vendedor: {deal.seller.name}.
+            Uso la ubicación guardada en las cuentas para calcular un punto de
+            encuentro cómodo para ambos.
           </ChatBubble>
           {suggestion && (
             <ChatBubble side="assistant">
@@ -419,44 +570,126 @@ function ShippingAssistant({ deal }: { deal: DashboardDeal }) {
           )}
           {error && <ChatBubble side="assistant">{error}</ChatBubble>}
         </div>
+
+        {suggestion && (
+          <div className="mt-6 rounded-lg border border-border">
+            <div className="border-b border-border px-4 py-3">
+              <p className="text-sm font-medium">
+                Chat con {counterparty.name}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Coordinación final de punto y horario
+              </p>
+            </div>
+
+            <div ref={chatContainerRef} className="max-h-72 space-y-3 overflow-y-auto p-4">
+              <ChatBubble side="assistant">
+                Punto sugerido:{" "}
+                <span className="font-medium">{suggestion.midpointLabel}</span>.
+                Usalo como base para acordar con {counterparty.name}.
+              </ChatBubble>
+              {chatLoading ? (
+                <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
+                  Cargando mensajes...
+                </p>
+              ) : chatMessages.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
+                  Todavía no mandaste mensajes para esta entrega.
+                </p>
+              ) : (
+                chatMessages.map((message) => (
+                  <ChatBubble
+                    key={message.id}
+                    side={message.side === deal.role ? "user" : "assistant"}
+                  >
+                    {message.content}
+                  </ChatBubble>
+                ))
+              )}
+            </div>
+
+            <div className="border-t border-border p-4">
+              <div className="mb-3 flex flex-wrap gap-2">
+                {quickMessages.map((message) => (
+                  <button
+                    key={message}
+                    type="button"
+                    onClick={() => void sendCoordinationMessage(message)}
+                    disabled={sendingMessage}
+                    className="rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+                  >
+                    {message}
+                  </button>
+                ))}
+              </div>
+              <form onSubmit={handleSendMessage} className="flex gap-2">
+                <input
+                  value={messageDraft}
+                  onChange={(event) => setMessageDraft(event.target.value)}
+                  placeholder={`Mensaje para ${counterparty.name}`}
+                  className="h-10 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-colors focus:border-foreground"
+                />
+                <button
+                  type="submit"
+                  disabled={!messageDraft.trim() || sendingMessage}
+                  className="inline-flex h-10 shrink-0 items-center justify-center rounded-lg bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {sendingMessage ? "Enviando..." : "Enviar"}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
 
       <aside className="border-t border-border bg-muted/40 p-5 lg:border-l lg:border-t-0">
-        <label className="text-xs font-medium text-muted-foreground">
-          Ubicación comprador
-        </label>
-        <input
-          value={buyerLocation}
-          onChange={(event) => setBuyerLocation(event.target.value)}
-          placeholder="Ej. Palermo, CABA"
-          className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition-colors focus:border-foreground"
-        />
-        <label className="mt-4 block text-xs font-medium text-muted-foreground">
-          Ubicación vendedor
-        </label>
-        <input
-          value={sellerLocation}
-          onChange={(event) => setSellerLocation(event.target.value)}
-          placeholder="Ej. Vicente Lopez"
-          className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition-colors focus:border-foreground"
-        />
+        {accountLocation ? (
+          <div className="rounded-lg border border-border bg-background p-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              Tu ubicación de cuenta
+            </p>
+            <p className="mt-1 text-sm font-medium">{accountLocation}</p>
+          </div>
+        ) : (
+          <>
+            <label className="text-xs font-medium text-muted-foreground">
+              Tu ubicación
+            </label>
+            <input
+              value={locationDraft}
+              onChange={(event) => setLocationDraft(event.target.value)}
+              placeholder="Ej. Palermo, CABA"
+              className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition-colors focus:border-foreground"
+            />
+            <button
+              type="button"
+              onClick={handleDetectLocation}
+              disabled={detectingLocation}
+              className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-lg border border-input bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {detectingLocation ? "Detectando..." : "Detectar ubicación actual"}
+            </button>
+          </>
+        )}
         <button
           type="button"
           onClick={handleSuggest}
           disabled={!canSuggest || loading}
           className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? "Pensando..." : "Sugerir punto medio"}
+          {savingLocation ? "Guardando..." : loading ? "Pensando..." : "Sugerir punto medio"}
         </button>
 
         {suggestion && (
           <div className="mt-5 rounded-lg border border-border bg-background p-4">
             <p className="text-sm font-medium">{suggestion.midpointLabel}</p>
-            <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-              {suggestion.meetingTips.map((tip) => (
-                <li key={tip}>- {tip}</li>
-              ))}
-            </ul>
+            {meetingTips.length > 0 && (
+              <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+                {meetingTips.map((tip) => (
+                  <li key={tip}>- {tip}</li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </aside>

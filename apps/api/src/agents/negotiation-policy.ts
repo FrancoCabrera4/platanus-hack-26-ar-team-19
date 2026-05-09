@@ -211,11 +211,18 @@ function acceptanceFloor(policy: PricePolicy): number {
   return floor;
 }
 
-function cleanMessage(message: string, side: Side, price?: number): string {
+function cleanMessage(
+  message: string | null | undefined,
+  side: Side,
+  price?: number,
+): string {
+  const text = typeof message === "string" ? message.trim() : "";
   const forbidden =
     /(maxPrice|askPrice|negotiationStrategy|precio máximo|estrategia|ceiling|floor)/i;
-  const tooLong = message.trim().split(/\s+/).length > 38;
-  if (!message.trim() || forbidden.test(message) || tooLong) {
+  const tooLong = text.split(/\s+/).length > 38;
+  const mismatchedPrice =
+    price !== undefined && mentionsDifferentPrice(text, price);
+  if (!text || forbidden.test(text) || tooLong || mismatchedPrice) {
     if (side === "buyer") {
       return price
         ? `Me interesa y puedo avanzar si lo dejamos en $${formatARS(price)}.`
@@ -225,7 +232,7 @@ function cleanMessage(message: string, side: Side, price?: number): string {
       ? `Gracias por la oferta. Puedo dejarlo en $${formatARS(price)} y cerramos.`
       : "Gracias, pero con ese valor prefiero no avanzar.";
   }
-  return message.trim();
+  return text;
 }
 
 function lastPrice(
@@ -255,6 +262,22 @@ function roundARS(value: number): number {
           ? 1_000
           : 500;
   return Math.round(value / step) * step;
+}
+
+function mentionsDifferentPrice(
+  message: string,
+  expectedPrice: number,
+): boolean {
+  const expected = roundARS(expectedPrice);
+  const matches = message.match(/\$?\s*\d[\d.,]*/g) ?? [];
+  return matches.some((raw) => {
+    const digits = raw.replace(/\D/g, "");
+    if (!digits) return false;
+    const mentioned = Number(digits);
+    return (
+      Number.isFinite(mentioned) && mentioned >= 100 && mentioned !== expected
+    );
+  });
 }
 
 function formatARS(value: number): string {

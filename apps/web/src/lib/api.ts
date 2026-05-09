@@ -37,6 +37,7 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
+  location: string | null;
 };
 
 export type AuthResponse = {
@@ -47,10 +48,18 @@ export async function signup(input: {
   name: string;
   email: string;
   password: string;
+  location: string;
 }): Promise<AuthResponse> {
   return apiFetch<AuthResponse>("/auth/signup", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export async function updateMyLocation(location: string): Promise<AuthResponse> {
+  return apiFetch<AuthResponse>("/auth/me/location", {
+    method: "PATCH",
+    body: JSON.stringify({ location }),
   });
 }
 
@@ -235,6 +244,7 @@ export type DashboardDeal = {
     imageUrl: string | null;
     category: string | null;
   };
+  midpoint: ShippingSuggestion | null;
 };
 
 export type ShippingSuggestion = {
@@ -257,8 +267,16 @@ export type SearchDetail = {
 export type NegotiationMessage = {
   id: string;
   side: "seller" | "buyer";
-  action: "offer" | "counter" | "accept" | "reject" | "open";
+  action: "offer" | "counter" | "accept" | "reject" | "open" | "coordinate";
   proposedPrice: number | null;
+  content: string;
+  createdAt: string;
+};
+
+export type CoordinationMessage = {
+  id: string;
+  negotiationId: string;
+  side: "seller" | "buyer";
   content: string;
   createdAt: string;
 };
@@ -305,13 +323,33 @@ export async function listDashboardDeals(): Promise<DashboardDeal[]> {
 
 export async function suggestShipping(input: {
   negotiationId: string;
-  buyerLocation: string;
-  sellerLocation: string;
+  userLocation: string;
 }): Promise<ShippingSuggestion> {
   return apiFetch<ShippingSuggestion>("/shipping/suggest", {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function listCoordinationMessages(
+  negotiationId: string,
+): Promise<CoordinationMessage[]> {
+  return apiFetch<CoordinationMessage[]>(
+    `/negotiations/${negotiationId}/coordination-messages`,
+  );
+}
+
+export async function sendCoordinationMessage(
+  negotiationId: string,
+  content: string,
+): Promise<CoordinationMessage> {
+  return apiFetch<CoordinationMessage>(
+    `/negotiations/${negotiationId}/coordination-messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    },
+  );
 }
 
 export async function acceptNegotiation(id: string): Promise<NegotiationSummary> {

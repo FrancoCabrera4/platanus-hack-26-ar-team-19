@@ -15,9 +15,14 @@ import { asyncHandler } from "./_sse";
 export const authRouter: RouterType = Router();
 
 const SignupBody = z.object({
-  name: z.string().min(1),
+  name: z.string().trim().min(1),
   email: z.string().email(),
   password: z.string().min(8),
+  location: z.string().trim().min(1),
+});
+
+const UpdateLocationBody = z.object({
+  location: z.string().trim().min(1),
 });
 
 const LoginBody = z.object({
@@ -39,6 +44,7 @@ authRouter.post("/signup", asyncHandler(async (req, res) => {
         where: { id: existing.id },
         data: {
           name: parsed.data.name,
+          location: parsed.data.location,
           passwordHash: hashPassword(parsed.data.password),
         },
       })
@@ -46,6 +52,7 @@ authRouter.post("/signup", asyncHandler(async (req, res) => {
         data: {
           name: parsed.data.name,
           email: parsed.data.email,
+          location: parsed.data.location,
           passwordHash: hashPassword(parsed.data.password),
         },
       });
@@ -79,5 +86,20 @@ authRouter.post("/logout", asyncHandler(async (req, res) => {
 authRouter.get("/me", asyncHandler(async (req, res) => {
   const user = await getAuthUser(req);
   if (!user) return res.status(401).json({ error: "unauthorized" });
+  return res.json({ user: publicUser(user) });
+}));
+
+authRouter.patch("/me/location", asyncHandler(async (req, res) => {
+  const currentUser = await getAuthUser(req);
+  if (!currentUser) return res.status(401).json({ error: "unauthorized" });
+
+  const parsed = UpdateLocationBody.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const user = await prisma.user.update({
+    where: { id: currentUser.id },
+    data: { location: parsed.data.location.trim() },
+  });
+
   return res.json({ user: publicUser(user) });
 }));

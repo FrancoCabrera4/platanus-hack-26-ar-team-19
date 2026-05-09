@@ -11,17 +11,42 @@ import { ApiError, signup } from "@/lib/api";
 export default function SignupPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [location, setLocation] = useState("");
   const [password, setPassword] = useState("");
+  const [detectingLocation, setDetectingLocation] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  function handleDetectLocation() {
+    if (!navigator.geolocation || detectingLocation) {
+      setError("Tu navegador no permite detectar la ubicación automáticamente.");
+      return;
+    }
+
+    setDetectingLocation(true);
+    setError(null);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = position.coords.latitude.toFixed(5);
+        const longitude = position.coords.longitude.toFixed(5);
+        setLocation(`Ubicación actual (${latitude}, ${longitude})`);
+        setDetectingLocation(false);
+      },
+      () => {
+        setError("No pude detectar tu ubicación. Podés escribir una zona aproximada.");
+        setDetectingLocation(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      await signup({ name, email, password });
+      await signup({ name, email, password, location });
       router.push("/explore");
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "signup_failed";
@@ -97,6 +122,27 @@ export default function SignupPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="location">Ubicación</Label>
+              <Input
+                id="location"
+                type="text"
+                placeholder="Ej. Palermo, CABA"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                required
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handleDetectLocation}
+                disabled={detectingLocation}
+              >
+                {detectingLocation ? "Detectando..." : "Detectar ubicación actual"}
+              </Button>
             </div>
 
             <div className="space-y-2">

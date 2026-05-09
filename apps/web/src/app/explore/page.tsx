@@ -315,7 +315,14 @@ export default function ExplorePage() {
           } else if (search.negotiations.length === 0) {
             setSearchTiles([]);
             setChatCollapsed(false);
-            setMessages((prev) => [...prev, { role: "assistant", content: "No encontré productos que coincidan con lo que buscás. Probá con otra búsqueda o cambiá los filtros." }]);
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                content:
+                  "No encontré productos que coincidan con lo que buscás. Probá con otra búsqueda o cambiá los filtros.",
+              },
+            ]);
             window.history.replaceState({}, "", "/explore");
             setSearchStatus("");
             return;
@@ -431,7 +438,8 @@ export default function ExplorePage() {
         ...prev,
         {
           role: "assistant",
-          content: "Para vender necesitás subir una imagen del producto antes de publicar. Tocá el botón + y adjuntá una foto.",
+          content:
+            "Para vender necesitás subir una imagen del producto antes de publicar. Tocá el botón + y adjuntá una foto.",
         },
       ]);
       setChatMode("posting_product");
@@ -440,10 +448,12 @@ export default function ExplorePage() {
       return;
     }
 
-    const msgContent = pendingImage
-      ? `${text}\n[Imagen adjunta: ${pendingImage.name}]`
-      : text;
-    setMessages((prev) => [...prev, { role: "user", content: msgContent }, { role: "assistant", content: "" }]);
+    const previewUrl = pendingImage ? (imagePreview ?? undefined) : undefined;
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: text, imageUrl: previewUrl },
+      { role: "assistant", content: "" },
+    ]);
     setInput("");
     setSuggestions([]);
     setStreaming(true);
@@ -459,13 +469,27 @@ export default function ExplorePage() {
           const upload = await uploadImage(pendingImage);
           imageUrl = upload.url;
           setProductImageUrl(upload.url);
+          setMessages((prev) => {
+            const copy = [...prev];
+            for (let i = copy.length - 1; i >= 0; i--) {
+              if (copy[i]?.role === "user") {
+                copy[i] = { ...copy[i]!, imageUrl: upload.url };
+                break;
+              }
+            }
+            return copy;
+          });
           clearImage();
         } catch {
           setMessages((prev) => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last?.role === "assistant") {
-              copy[copy.length - 1] = { ...last, content: "No pude subir la imagen. Intentá de nuevo antes de publicar." };
+              copy[copy.length - 1] = {
+                ...last,
+                content:
+                  "No pude subir la imagen. Intentá de nuevo antes de publicar.",
+              };
             }
             return copy;
           });
@@ -474,10 +498,9 @@ export default function ExplorePage() {
       }
 
       let convId = conversationId;
-      let mode = chatMode;
+      let mode = nextMode;
 
       if (!convId) {
-        mode = detectMode(text);
         setChatMode(mode);
         const conv = await startConversation(
           mode === "posting_product" ? "posting_product" : "buying",
@@ -685,8 +708,15 @@ export default function ExplorePage() {
       const conv = await getConversation(convId);
       setConversationId(conv.id);
       setChatMode(conv.mode);
-      setProductImageUrl(conv.mode === "posting_product" ? conv.state?.imageUrl ?? null : null);
-      setMessages(conv.messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })));
+      setProductImageUrl(
+        conv.mode === "posting_product" ? (conv.state?.imageUrl ?? null) : null,
+      );
+      setMessages(
+        conv.messages.map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+      );
       setShowHistory(false);
       const searchId = conv.searchId ?? conv.search?.id;
       if (searchId) {
@@ -1328,23 +1358,25 @@ export default function ExplorePage() {
                     )}
                   </div>
                 ))}
-                {suggestions.length > 0 && !streaming && chatMode === "posting_product" && (
-                  <div className="flex flex-wrap gap-2 animate-msg-in pt-1">
-                    {suggestions.map((s, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => {
-                          setSuggestions([]);
-                          handleSend(undefined, s);
-                        }}
-                        className="px-3 py-1.5 text-xs rounded-full bg-foreground/10 text-foreground hover:bg-foreground/20 transition-colors font-medium"
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {suggestions.length > 0 &&
+                  !streaming &&
+                  chatMode === "posting_product" && (
+                    <div className="flex flex-wrap gap-2 animate-msg-in pt-1">
+                      {suggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => {
+                            setSuggestions([]);
+                            handleSend(undefined, s);
+                          }}
+                          className="px-3 py-1.5 text-xs rounded-full bg-foreground/10 text-foreground hover:bg-foreground/20 transition-colors font-medium"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 <div ref={messagesEndRef} />
               </div>
             </div>
