@@ -1,4 +1,4 @@
-import { generateJSON, type ChatTurn } from "../llm/gemini";
+import { generateJSON, generateStreamJSON, type ChatTurn } from "../llm/gemini";
 
 export interface BuyerSearchDraft {
   query?: string;
@@ -63,4 +63,18 @@ export async function runBuyerOnboardingTurn(
     jsonSchema: SCHEMA,
     temperature: 0.6,
   });
+}
+
+export async function streamBuyerOnboardingTurn(
+  history: ChatTurn[],
+  currentState: BuyerSearchDraft,
+  onChunk: (text: string) => void,
+): Promise<BuyerOnboardingTurn> {
+  const stateNote = `Current extracted state (carry forward, only overwrite when the user provides new info):\n${JSON.stringify(currentState, null, 2)}`;
+  return generateStreamJSON<BuyerOnboardingTurn>({
+    system: SYSTEM + "\n\n" + stateNote,
+    history,
+    jsonSchema: SCHEMA,
+    temperature: 0.6,
+  }, onChunk);
 }

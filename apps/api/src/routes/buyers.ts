@@ -3,6 +3,7 @@ import { z } from "zod";
 import prisma from "@repo/db";
 import {
   runBuyerOnboardingTurn,
+  streamBuyerOnboardingTurn,
   type BuyerSearchDraft,
 } from "../agents/buyer-onboarding";
 import type { ChatTurn } from "../llm/gemini";
@@ -111,6 +112,85 @@ buyersRouter.post("/conversations/:id/messages", async (req, res) => {
     done: turn.done,
     searchId,
   });
+});
+
+// POST /buyers/conversations/:id/messages/stream — SSE streaming
+buyersRouter.post("/conversations/:id/messages/stream", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  const parsed = PostMessage.safeParse(req.body);
+  if (!parsed.success) {
+    res.write(`data: ${JSON.stringify({ error: "invalid input" })}\n\n`);
+    return res.end();
+  }
+
+  const conv = await prisma.buyerConversation.findUnique({
+    where: { id: req.params.id },
+    include: { messages: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!conv) {
+    res.write(`data: ${JSON.stringify({ error: "conversation not found" })}\n\n`);
+    return res.end();
+  }
+  if (conv.status === "completed") {
+    res.write(`data: ${JSON.stringify({ error: "conversation already completed" })}\n\n`);
+    return res.end();
+  }
+
+  await prisma.conversationMessage.create({
+    data: { buyerConvId: conv.id, role: "user", content: parsed.data.content },
+  });
+
+  const history: ChatTurn[] = [
+    ...conv.messages.map((m) => ({ role: m.role as ChatTurn["role"], content: m.content })),
+    { role: "user", content: parsed.data.content },
+  ];
+  const state = JSON.parse(conv.state) as BuyerSearchDraft;
+
+  try {
+    const turn = await streamBuyerOnboardingTurn(history, state, (chunk) => {
+      res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+    });
+
+    const merged: BuyerSearchDraft = { ...state, ...turn.state };
+
+    await prisma.conversationMessage.create({
+      data: { buyerConvId: conv.id, role: "assistant", content: turn.reply },
+    });
+
+    let searchId: string | undefined;
+    if (turn.done && merged.query && merged.maxPrice) {
+      const search = await prisma.buyerSearch.create({
+        data: {
+          buyerId: conv.buyerId,
+          query: merged.query,
+          requirements: merged.requirements ?? null,
+          category: merged.category ?? null,
+          minPrice: merged.minPrice ?? null,
+          maxPrice: merged.maxPrice,
+          timeBudgetSeconds: merged.timeBudgetSeconds ?? 120,
+          status: "ready",
+        },
+      });
+      await prisma.buyerConversation.update({
+        where: { id: conv.id },
+        data: { status: "completed", searchId: search.id, state: JSON.stringify(merged) },
+      });
+      searchId = search.id;
+    } else {
+      await prisma.buyerConversation.update({
+        where: { id: conv.id },
+        data: { state: JSON.stringify(merged) },
+      });
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true, state: merged, searchId })}\n\n`);
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
+  }
+  res.end();
 });
 
 // GET /buyers/conversations/:id
