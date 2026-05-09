@@ -412,7 +412,7 @@ export default function ExplorePage() {
       {/* Chat container */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4 flex items-end gap-2 transition-all duration-300 ease-out">
         {/* History button - hides when chat or history is open */}
-        <div className={`shrink-0 mb-[13px] transition-all duration-300 ease-out ${showHistory || chatOpen ? "w-0 opacity-0 overflow-hidden -mr-2" : "w-10 opacity-100"}`}>
+        <div className="shrink-0 mb-[13px]">
           <button
             type="button"
             onClick={toggleHistory}
