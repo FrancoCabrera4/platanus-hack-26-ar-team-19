@@ -17,10 +17,55 @@ type ProductEmbeddingInput = {
 const openAiApiKey = process.env.OPENAI_API_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const openAiEmbeddingModel = process.env.OPENAI_EMBEDDING_MODEL ?? "text-embedding-3-small";
-const geminiEmbeddingModel = process.env.GEMINI_EMBEDDING_MODEL ?? "text-embedding-004";
+const geminiEmbeddingModel = process.env.GEMINI_EMBEDDING_MODEL ?? "gemini-embedding-001";
 
 const openAiClient = new OpenAI({ apiKey: openAiApiKey ?? "missing" });
 const geminiClient = new GoogleGenerativeAI(geminiApiKey ?? "missing");
+
+const GEMINI_MIN_GAP_MS = Number(process.env.GEMINI_EMBED_MIN_GAP_MS ?? 6500);
+const GEMINI_MAX_RETRIES = 5;
+let lastGeminiEmbedAt = 0;
+let geminiQueue: Promise<unknown> = Promise.resolve();
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(err: unknown): boolean {
+  const status = (err as { status?: number }).status;
+  if (status === 429 || status === 503) return true;
+  const msg = (err as { message?: string }).message ?? "";
+  return /quota|rate.?limit|exhausted|overloaded/i.test(msg);
+}
+
+async function geminiEmbedThrottled(text: string): Promise<number[]> {
+  const run = (async () => {
+    const wait = GEMINI_MIN_GAP_MS - (Date.now() - lastGeminiEmbedAt);
+    if (wait > 0) await sleep(wait);
+
+    const model = geminiClient.getGenerativeModel({ model: geminiEmbeddingModel });
+    let attempt = 0;
+    for (;;) {
+      try {
+        const response = await model.embedContent(text);
+        lastGeminiEmbedAt = Date.now();
+        return response.embedding.values;
+      } catch (err) {
+        if (!isRateLimitError(err) || attempt >= GEMINI_MAX_RETRIES) throw err;
+        const backoff = Math.min(60000, 1000 * 2 ** attempt);
+        log(`[embeddings] Gemini rate limit hit, retrying in ${backoff}ms (attempt ${attempt + 1}/${GEMINI_MAX_RETRIES})`);
+        await sleep(backoff);
+        attempt += 1;
+      }
+    }
+  })();
+
+  // Serialize all Gemini embed calls to keep the pacing accurate under concurrency.
+  const previous = geminiQueue;
+  geminiQueue = previous.then(() => run).catch(() => undefined);
+  await previous.catch(() => undefined);
+  return run;
+}
 
 export function buildProductEmbeddingText(product: ProductEmbeddingInput): string {
   return [
@@ -64,10 +109,9 @@ export async function embedText(text: string): Promise<{ values: number[]; model
   }
 
   if (geminiApiKey) {
-    const model = geminiClient.getGenerativeModel({ model: geminiEmbeddingModel });
-    const response = await model.embedContent(text);
+    const values = await geminiEmbedThrottled(text);
     return {
-      values: normalizeDimensions(response.embedding.values),
+      values: normalizeDimensions(values),
       model: geminiEmbeddingModel,
     };
   }

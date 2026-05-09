@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  acceptNegotiation,
+  ApiError,
   getNegotiation,
+  getProduct,
   getSearch,
   type NegotiationDetail,
+  type Product,
   type SearchDetail,
 } from "@/lib/api";
 
@@ -25,10 +29,18 @@ const STATUS_COPY: Record<SearchDetail["status"], { label: string; cls: string }
 const NEG_STATUS_COPY: Record<string, { label: string; cls: string }> = {
   pending: { label: "pendiente", cls: "bg-zinc-100 text-zinc-700" },
   running: { label: "negociando", cls: "bg-blue-100 text-blue-800" },
+  awaiting_buyer: { label: "esperando tu confirmación", cls: "bg-amber-100 text-amber-800" },
   accepted: { label: "cerrada", cls: "bg-emerald-100 text-emerald-800" },
   rejected: { label: "rechazada", cls: "bg-rose-100 text-rose-800" },
   timed_out: { label: "sin acuerdo", cls: "bg-zinc-100 text-zinc-700" },
   error: { label: "error", cls: "bg-rose-100 text-rose-800" },
+};
+
+const ACCEPT_ERROR_COPY: Record<string, string> = {
+  product_unavailable: "El producto ya no está disponible.",
+  over_budget: "El precio quedó por encima de tu tope.",
+  not_awaiting_buyer: "Esta negociación ya no está esperando tu confirmación.",
+  not_the_owner: "No tenés permiso para confirmar esta negociación.",
 };
 
 export default function SearchPage() {
@@ -37,6 +49,17 @@ export default function SearchPage() {
   const [search, setSearch] = useState<SearchDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const stoppedRef = useRef(false);
+
+  const refetch = useCallback(async () => {
+    try {
+      const s = await getSearch(searchId);
+      setSearch(s);
+      return s;
+    } catch (e) {
+      setError((e as Error).message);
+      return null;
+    }
+  }, [searchId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +153,14 @@ export default function SearchPage() {
           ) : (
             <div className="space-y-3">
               {search.negotiations.map((n) => (
-                <NegotiationCard key={n.id} summary={n} maxPrice={search.maxPrice} />
+                <NegotiationCard
+                  key={n.id}
+                  summary={n}
+                  maxPrice={search.maxPrice}
+                  onAccepted={() => {
+                    void refetch();
+                  }}
+                />
               ))}
             </div>
           )}
@@ -200,14 +230,22 @@ function OutcomeCard({ negotiation }: { negotiation: SearchDetail["negotiations"
 function NegotiationCard({
   summary,
   maxPrice,
+  onAccepted,
 }: {
   summary: SearchDetail["negotiations"][number];
   maxPrice: number;
+  onAccepted: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<"product" | "chat">("product");
   const [detail, setDetail] = useState<NegotiationDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [productLoading, setProductLoading] = useState(false);
+  const [accepting, setAccepting] = useState(false);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
   const status = NEG_STATUS_COPY[summary.status] ?? NEG_STATUS_COPY.pending;
+  const canAccept = summary.status === "awaiting_buyer" && summary.finalPrice != null;
 
   // Auto-poll messages while the negotiation is running and the card is open.
   useEffect(() => {
@@ -234,6 +272,41 @@ function NegotiationCard({
     };
   }, [open, summary.id, summary.status]);
 
+  // Lazy-load product detail when the card opens.
+  useEffect(() => {
+    if (!open || product || productLoading) return;
+    let cancelled = false;
+    setProductLoading(true);
+    getProduct(summary.product.id)
+      .then((p) => {
+        if (!cancelled) setProduct(p);
+      })
+      .catch(() => {
+        // ignore — fallback to summary fields
+      })
+      .finally(() => {
+        if (!cancelled) setProductLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, summary.product.id, product, productLoading]);
+
+  async function handleAccept() {
+    if (!canAccept || accepting) return;
+    setAccepting(true);
+    setAcceptError(null);
+    try {
+      await acceptNegotiation(summary.id);
+      onAccepted();
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : "error";
+      setAcceptError(ACCEPT_ERROR_COPY[code] ?? "No se pudo confirmar la negociación.");
+    } finally {
+      setAccepting(false);
+    }
+  }
+
   const dropPct =
     summary.finalPrice && summary.product.askPrice > 0
       ? Math.round(((summary.product.askPrice - summary.finalPrice) / summary.product.askPrice) * 100)
@@ -253,7 +326,8 @@ function NegotiationCard({
               Pedido: {formatARS(summary.product.askPrice)}
               {summary.finalPrice != null && (
                 <>
-                  {" "}· Cerrado: <span className="font-medium text-foreground">{formatARS(summary.finalPrice)}</span>
+                  {" "}· {summary.status === "awaiting_buyer" ? "Acordado" : "Cerrado"}:{" "}
+                  <span className="font-medium text-foreground">{formatARS(summary.finalPrice)}</span>
                   {dropPct != null && dropPct > 0 && (
                     <span className="ml-1 text-emerald-700">(-{dropPct}%)</span>
                   )}
@@ -268,48 +342,203 @@ function NegotiationCard({
       </button>
 
       {open && (
-        <div className="border-t border-black/5 bg-zinc-50/50 px-4 py-3">
-          {loading && !detail ? (
-            <div className="space-y-2">
-              <div className="h-3 w-2/3 rounded bg-zinc-200 animate-pulse" />
-              <div className="h-3 w-1/2 rounded bg-zinc-100 animate-pulse" />
-            </div>
-          ) : detail && detail.messages.length > 0 ? (
-            <div className="space-y-3">
-              {detail.messages.map((m) => (
-                <div key={m.id} className={`flex ${m.side === "buyer" ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={`max-w-[78%] rounded-2xl px-3 py-2 ${
-                      m.side === "buyer"
-                        ? "bg-foreground text-background rounded-br-md"
-                        : "bg-white border border-black/10 rounded-bl-md"
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide opacity-70">
-                      <span>{m.side === "buyer" ? "comprador" : "vendedor"}</span>
-                      <span>·</span>
-                      <span>{m.action}</span>
-                      {m.proposedPrice != null && (
-                        <>
-                          <span>·</span>
-                          <span className="font-medium">{formatARS(m.proposedPrice)}</span>
-                        </>
-                      )}
+        <div className="border-t border-black/5 bg-zinc-50/50">
+          <div className="flex items-center gap-1 px-2 pt-2">
+            <TabButton active={tab === "product"} onClick={() => setTab("product")}>
+              Producto
+            </TabButton>
+            <TabButton active={tab === "chat"} onClick={() => setTab("chat")}>
+              Negociación
+            </TabButton>
+          </div>
+
+          <div className="px-4 py-3">
+            {tab === "product" ? (
+              <ProductPanel
+                product={product}
+                loading={productLoading}
+                fallbackTitle={summary.product.title}
+                fallbackImageUrl={summary.product.imageUrl}
+                fallbackAskPrice={summary.product.askPrice}
+                finalPrice={summary.finalPrice}
+                canAccept={canAccept}
+                accepting={accepting}
+                acceptError={acceptError}
+                onAccept={handleAccept}
+              />
+            ) : loading && !detail ? (
+              <div className="space-y-2">
+                <div className="h-3 w-2/3 rounded bg-zinc-200 animate-pulse" />
+                <div className="h-3 w-1/2 rounded bg-zinc-100 animate-pulse" />
+              </div>
+            ) : detail && detail.messages.length > 0 ? (
+              <div className="space-y-3">
+                {detail.messages.map((m) => (
+                  <div key={m.id} className={`flex ${m.side === "buyer" ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`max-w-[78%] rounded-2xl px-3 py-2 ${
+                        m.side === "buyer"
+                          ? "bg-foreground text-background rounded-br-md"
+                          : "bg-white border border-black/10 rounded-bl-md"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide opacity-70">
+                        <span>{m.side === "buyer" ? "comprador" : "vendedor"}</span>
+                        <span>·</span>
+                        <span>{m.action}</span>
+                        {m.proposedPrice != null && (
+                          <>
+                            <span>·</span>
+                            <span className="font-medium">{formatARS(m.proposedPrice)}</span>
+                          </>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-sm leading-snug">{m.content}</p>
                     </div>
-                    <p className="mt-0.5 text-sm leading-snug">{m.content}</p>
                   </div>
-                </div>
-              ))}
-              {detail.reason && (
-                <p className="pt-1 text-xs italic text-muted-foreground">Motivo: {detail.reason}</p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Esperando primer turno…</p>
+                ))}
+                {detail.reason && (
+                  <p className="pt-1 text-xs italic text-muted-foreground">Motivo: {detail.reason}</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Esperando primer turno…</p>
+            )}
+            <p className="mt-3 text-[10px] text-muted-foreground">
+              Tope del comprador: {formatARS(maxPrice)} (privado para el vendedor)
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+        active
+          ? "bg-white text-foreground shadow-sm border border-black/10"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ProductPanel({
+  product,
+  loading,
+  fallbackTitle,
+  fallbackImageUrl,
+  fallbackAskPrice,
+  finalPrice,
+  canAccept,
+  accepting,
+  acceptError,
+  onAccept,
+}: {
+  product: Product | null;
+  loading: boolean;
+  fallbackTitle: string;
+  fallbackImageUrl: string | null;
+  fallbackAskPrice: number;
+  finalPrice: number | null;
+  canAccept: boolean;
+  accepting: boolean;
+  acceptError: string | null;
+  onAccept: () => void;
+}) {
+  const title = product?.title ?? fallbackTitle;
+  const description = product?.description ?? null;
+  const imageUrl = product?.imageUrl ?? fallbackImageUrl;
+  const askPrice = product?.askPrice ?? fallbackAskPrice;
+  const category = product?.category ?? null;
+  const condition = product?.condition ?? null;
+
+  return (
+    <div className="space-y-3">
+      <div className="aspect-video w-full overflow-hidden rounded-lg bg-zinc-100">
+        {imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={imageUrl} alt={title} className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+            Sin imagen
+          </div>
+        )}
+      </div>
+
+      <div>
+        <p className="text-sm font-medium">{title}</p>
+        {(category || condition) && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {category && (
+              <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-700">
+                {category}
+              </span>
+            )}
+            {condition && (
+              <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-700">
+                {condition}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {loading && !description ? (
+        <div className="space-y-1.5">
+          <div className="h-3 w-full rounded bg-zinc-200 animate-pulse" />
+          <div className="h-3 w-5/6 rounded bg-zinc-100 animate-pulse" />
+          <div className="h-3 w-2/3 rounded bg-zinc-100 animate-pulse" />
+        </div>
+      ) : description ? (
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{description}</p>
+      ) : null}
+
+      <div className="rounded-lg bg-white border border-black/5 p-3 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Precio pedido</span>
+          <span className="font-medium">{formatARS(askPrice)}</span>
+        </div>
+        {finalPrice != null && (
+          <div className="mt-1 flex items-center justify-between">
+            <span className="text-muted-foreground">Precio negociado</span>
+            <span className="font-medium text-emerald-700">{formatARS(finalPrice)}</span>
+          </div>
+        )}
+      </div>
+
+      {canAccept && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={onAccept}
+            disabled={accepting}
+            className="w-full rounded-lg bg-foreground py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {accepting
+              ? "Confirmando…"
+              : finalPrice != null
+                ? `Aceptar a ${formatARS(finalPrice)}`
+                : "Aceptar"}
+          </button>
+          {acceptError && (
+            <p className="text-xs text-rose-700">{acceptError}</p>
           )}
-          <p className="mt-3 text-[10px] text-muted-foreground">
-            Tope del comprador: {formatARS(maxPrice)} (privado para el vendedor)
-          </p>
         </div>
       )}
     </div>
