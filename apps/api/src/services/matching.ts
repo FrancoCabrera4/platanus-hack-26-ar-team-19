@@ -19,6 +19,16 @@ export interface MatchCandidate {
   matchQuality: MatchQuality;
 }
 
+/** Row returned by {@link findMatches} — embedding/lexical retrieval only (no LLM re-rank). */
+export interface RetrievalMatch {
+  id: string;
+  title: string;
+  description: string;
+  category: string | null;
+  askPrice: number;
+  vectorSimilarity: number;
+}
+
 function classifyMatchQuality(score: number): MatchQuality {
   if (score >= 0.9) return "exact";
   if (score >= 0.75) return "close";
@@ -43,8 +53,14 @@ interface ScoringInput {
   }[];
 }
 
-interface ScoringResult {
-  matches: MatchCandidate[];
+/** Raw LLM re-rank output (before price adjustment and matchQuality mapping). */
+interface LlmScoringResponse {
+  matches: {
+    productId: string;
+    score: number;
+    rationale: string;
+    isExactMatch?: boolean;
+  }[];
 }
 
 interface ProductCandidate {
@@ -159,7 +175,11 @@ const SCORING_SCHEMA = {
           productId: { type: "string" },
           score: { type: "number" },
           rationale: { type: "string" },
-          isExactMatch: { type: "boolean", description: "true ONLY if this is precisely what the buyer asked for (same brand, model, type)" },
+          isExactMatch: {
+            type: "boolean",
+            description:
+              "true ONLY if this listing is precisely what the buyer asked for (same brand, model, type). This is a label for UX only — it MUST NOT determine whether you include the product; include every product that scores >= the threshold regardless of this flag.",
+          },
         },
         required: ["productId", "score", "rationale", "isExactMatch"],
       },
@@ -169,19 +189,20 @@ const SCORING_SCHEMA = {
 } as const;
 
 /**
- * Find candidate products that could fulfill a buyer search.
+ * Find candidate products that could fulfill a buyer search (retrieval + embedding rank only).
  *
  * Pipeline:
  *   1. Query expansion — LLM generates synonyms and related terms
  *   2. Multi-embedding retrieval — embed original + expanded query, merge results
  *   3. Lexical retrieval — ILIKE search for exact term matches
- *   4. LLM re-rank — score candidates considering relevance, price, buyer intent
- *   5. Vision re-rank — parallel image verification against buyer's description
+ *
+ * Does not run LLM re-rank or vision (see inline comment). Callers should pass rows through
+ * {@link matchCandidatesFromRetrieval} with the buyer's `maxPrice` before negotiation/UI scoring.
  */
 export async function findMatches(
   searchId: string,
   topN = 5,
-): Promise<MatchCandidate[]> {
+): Promise<RetrievalMatch[]> {
   const search = await prisma.buyerSearch.findUnique({
     where: { id: searchId },
   });
@@ -263,6 +284,10 @@ export async function findMatches(
 
   if (candidates.length === 0) return [];
 
+  // I believe this are not needed with the new embeddings that takin into account the
+  // descriptions of the images, so DO NOT remove unless you're absolutely certain it makes sense
+  // to do so.
+  /*
   const candidateMap = new Map(
     candidates.map((candidate) => [candidate.id, candidate]),
   );
@@ -290,8 +315,19 @@ export async function findMatches(
   if (imageDescription) {
     matches = await visionRerank(matches, candidateMap, imageDescription);
   }
-
   return matches.slice(0, topN);
+  */
+
+  console.log(candidates);
+
+  return candidates.slice(0, topN).map((candidate) => ({
+    id: candidate.id,
+    title: candidate.title,
+    description: candidate.description,
+    category: candidate.category,
+    askPrice: candidate.askPrice,
+    vectorSimilarity: candidate.similarity,
+  }));
 }
 
 // --- Price-aware scoring ---
@@ -308,14 +344,18 @@ async function scoreCandidatesWithLlm(
   );
 
   try {
-    const result = await generateJSON<ScoringResult>({
+    const result = await generateJSON<LlmScoringResponse>({
       system: `You are ranking product matches for an Argentine second-hand marketplace.
 
 Score how well each product satisfies the buyer's intent, not just broad category similarity.
 Use 0 for a different product type, 0.25 for weak/ambiguous matches, 0.5 for plausible but flawed matches, 0.75 for good matches, and 0.9+ only for excellent matches.
 Reject false positives aggressively: for example, accessories, parts, unrelated brands, or products that only share a category should score below 0.5.
 Consider requirements, category, visual description, budget, and the retrieval vectorSimilarity.
-Return only products with score >= ${minLlmMatchScore()}.`,
+
+IMPORTANT for the matches array:
+- Include EVERY retrieved candidate that scores >= ${minLlmMatchScore()}, up to the full candidate list. Do not shorten the list to a single "best" or "exact" listing when several listings qualify.
+- Sort by score descending so the strongest matches appear first.
+- Set isExactMatch true only for listings that precisely match what the buyer asked for; set it false for close or partial matches — but still include those listings if their score clears the threshold.`,
       history: [
         {
           role: "user",
@@ -339,20 +379,35 @@ Return only products with score >= ${minLlmMatchScore()}.`,
           candidate.askPrice,
           input.maxPrice,
         );
+        if (score < minLlmMatchScore()) return null;
+        const matchQuality: MatchQuality =
+          match.isExactMatch === true ? "exact" : classifyMatchQuality(score);
         return {
           productId: match.productId,
           score,
           rationale: match.rationale,
+          matchQuality,
         };
       })
       .filter((match): match is MatchCandidate => Boolean(match))
-      .filter((match) => match.score >= minLlmMatchScore())
       .sort((a, b) => b.score - a.score);
 
-    if (scored.length === 0) {
+    const llmIds = new Set(scored.map((m) => m.productId));
+    const supplemental = fallbackMatches.filter(
+      (m) => !llmIds.has(m.productId) && m.score >= minLlmMatchScore(),
+    );
+    const merged = [...scored, ...supplemental].sort(
+      (a, b) => b.score - a.score,
+    );
+
+    if (merged.length === 0) {
       log("[matching] LLM rejected all candidates.");
+    } else if (supplemental.length > 0) {
+      log(
+        `[matching] Added ${supplemental.length} retrieval fallback match(es) not returned by LLM re-rank.`,
+      );
     }
-    return scored;
+    return merged;
   } catch (err) {
     log("[matching] LLM scoring failed:", (err as Error).message);
     return fallbackMatches.filter((match) => match.score >= minLlmMatchScore());
@@ -380,6 +435,26 @@ function priceAdjustedScore(
     priceBonus = -0.15;
   }
   return Math.max(0, Math.min(1, baseSimilarity + priceBonus));
+}
+
+/** Turn retrieval rows into scored {@link MatchCandidate}s for the runner / job payload. */
+export function matchCandidatesFromRetrieval(
+  rows: RetrievalMatch[],
+  maxPrice: number,
+): MatchCandidate[] {
+  return rows.map((row) => {
+    const score = priceAdjustedScore(
+      row.vectorSimilarity,
+      row.askPrice,
+      maxPrice,
+    );
+    return {
+      productId: row.id,
+      score,
+      rationale: "Ranked by similarity to your search (embeddings).",
+      matchQuality: classifyMatchQuality(score),
+    };
+  });
 }
 
 // --- Vision re-ranking (parallel with concurrency limit) ---
@@ -607,15 +682,19 @@ function candidatesToMatches(
   candidates: ProductCandidate[],
   maxPrice: number,
 ): MatchCandidate[] {
-  return candidates.map((candidate) => ({
-    productId: candidate.id,
-    score: priceAdjustedScore(
+  return candidates.map((candidate) => {
+    const score = priceAdjustedScore(
       candidate.similarity,
       candidate.askPrice,
       maxPrice,
-    ),
-    rationale: "Fallback retrieval score.",
-  }));
+    );
+    return {
+      productId: candidate.id,
+      score,
+      rationale: "Fallback retrieval score.",
+      matchQuality: classifyMatchQuality(score),
+    };
+  });
 }
 
 function normalizeCategory(category: string | null): string | null {

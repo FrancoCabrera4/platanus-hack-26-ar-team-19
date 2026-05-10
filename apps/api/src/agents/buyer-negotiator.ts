@@ -97,7 +97,7 @@ Is this your opening turn? ${isOpening ? "yes — use action=open" : "no"}
 Decide your move now. Use realistic ARS amounts; avoid tiny changes and avoid jumps that reveal your budget.`;
 
   const history: ChatTurn[] = [{ role: "user", content: userPrompt }];
-  const raw = await generateJSON<NegotiatorMove | { reply: NegotiatorMove }>({
+  const move = await generateJSON<NegotiatorMove>({
     system: SYSTEM,
     history,
     jsonSchema: SCHEMA,

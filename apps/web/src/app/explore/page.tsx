@@ -1065,7 +1065,6 @@ export default function ExplorePage() {
                     <line x1="23" y1="11" x2="17" y2="11" />
                   </svg>
                   Integraciones
-                  {!user?.mpConnected && <span className="ml-auto w-2 h-2 rounded-full bg-destructive" />}
                 </button>
                 <div className="border-t border-black/5" />
                 <button
@@ -1654,181 +1653,168 @@ export default function ExplorePage() {
                   </svg>
                 </button>
               )}
-              {!user?.mpConnected ? (
-                <div className="px-3 py-2.5">
+              <form onSubmit={handleSend} className={chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"}>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+                <div className={`flex items-center gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}>
                   <button
                     type="button"
-                    onClick={() => setShowMpModal(true)}
-                    className="w-full flex items-center justify-center gap-2 h-10 rounded-full border border-[#009ee3]/30 bg-[#009ee3]/5 hover:bg-[#009ee3]/10 transition-colors"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center transition-colors shrink-0"
+                    title="Adjuntar imagen"
                   >
-                    <img src="/mp-handshake.svg" alt="" className="h-5" />
-                    <span className="text-sm text-[#009ee3] font-medium">Conecta Mercado Pago para empezar</span>
-                  </button>
-                </div>
-              ) : (
-                <form onSubmit={handleSend} className={chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"}>
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
-                  <div className={`flex items-center gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center transition-colors shrink-0"
-                      title="Adjuntar imagen"
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-foreground/40"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="text-foreground/40"
-                      >
-                        <line x1="12" y1="5" x2="12" y2="19" />
-                        <line x1="5" y1="12" x2="19" y2="12" />
-                      </svg>
-                    </button>
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
 
-                    {isRecording ? (
-                      <>
-                        <div className="flex-1 flex items-center justify-center">
-                          <canvas
-                            ref={canvasRef}
-                            width={300}
-                            height={32}
-                            className="w-full h-8"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={cancelRecording}
-                          className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
-                          title="Cancelar"
-                        >
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className="text-foreground/50"
-                          >
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={confirmRecording}
-                          className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
-                          title="Confirmar"
-                        >
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <textarea
-                          ref={textareaRef}
-                          value={transcript || input}
-                          onChange={(e) => {
-                            setInput(e.target.value);
-                            setTranscript("");
-                          }}
-                          onKeyDown={handleKeyDown}
-                          onPaste={handlePaste}
-                          placeholder={
-                            transcript ||
-                            "Decile a tu agente qué querés comprar o vender..."
-                          }
-                          rows={1}
-                          disabled={streaming || !!transcript}
-                          autoFocus
-                          className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground/40 focus:outline-none resize-none disabled:opacity-50"
-                          style={{ height: "32px", maxHeight: "160px", lineHeight: "32px", paddingTop: "0px", paddingBottom: "0px" }}
+                  {isRecording ? (
+                    <>
+                      <div className="flex-1 flex items-center justify-center">
+                        <canvas
+                          ref={canvasRef}
+                          width={300}
+                          height={32}
+                          className="w-full h-8"
                         />
-                        {streaming ? (
+                      </div>
+                      <button
+                        type="button"
+                        onClick={cancelRecording}
+                        className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
+                        title="Cancelar"
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="text-foreground/50"
+                        >
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={confirmRecording}
+                        className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
+                        title="Confirmar"
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <textarea
+                        ref={textareaRef}
+                        value={transcript || input}
+                        onChange={(e) => {
+                          setInput(e.target.value);
+                          setTranscript("");
+                        }}
+                        onKeyDown={handleKeyDown}
+                        onPaste={handlePaste}
+                        placeholder={
+                          transcript ||
+                          "Decile a tu agente qué querés comprar o vender..."
+                        }
+                        rows={1}
+                        disabled={streaming || !!transcript}
+                        autoFocus
+                        className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground/40 focus:outline-none resize-none disabled:opacity-50"
+                        style={{ height: "32px", maxHeight: "160px", lineHeight: "32px", paddingTop: "0px", paddingBottom: "0px" }}
+                      />
+                      {streaming ? (
+                        <button
+                          type="button"
+                          onClick={handleStop}
+                          className="h-8 w-8 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shrink-0 hover:bg-destructive/80 transition-colors"
+                          title="Detener"
+                        >
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                          >
+                            <rect x="6" y="6" width="12" height="12" rx="2" />
+                          </svg>
+                        </button>
+                      ) : (
+                        <>
                           <button
                             type="button"
-                            onClick={handleStop}
-                            className="h-8 w-8 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shrink-0 hover:bg-destructive/80 transition-colors"
-                            title="Detener"
+                            onClick={startRecording}
+                            className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
+                            title="Grabar audio"
                           >
                             <svg
-                              width="12"
-                              height="12"
+                              width="16"
+                              height="16"
                               viewBox="0 0 24 24"
-                              fill="currentColor"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className="text-foreground/40"
                             >
-                              <rect x="6" y="6" width="12" height="12" rx="2" />
+                              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                              <line x1="12" y1="19" x2="12" y2="23" />
+                              <line x1="8" y1="23" x2="16" y2="23" />
                             </svg>
                           </button>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={startRecording}
-                              className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
-                              title="Grabar audio"
+                          <button
+                            type="submit"
+                            className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
                             >
-                              <svg
-                                width="16"
-                                height="16"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                className="text-foreground/40"
-                              >
-                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                <line x1="12" y1="19" x2="12" y2="23" />
-                                <line x1="8" y1="23" x2="16" y2="23" />
-                              </svg>
-                            </button>
-                            <button
-                              type="submit"
-                              className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
-                            >
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <line x1="12" y1="19" x2="12" y2="5" />
-                                <polyline points="5 12 12 5 19 12" />
-                              </svg>
-                            </button>
-                          </>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </form>
-              )}
+                              <line x1="12" y1="19" x2="12" y2="5" />
+                              <polyline points="5 12 12 5 19 12" />
+                            </svg>
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              </form>
             </>
           )}
         </div>
@@ -1941,7 +1927,7 @@ export default function ExplorePage() {
                 <div className="text-center">
                   <p className="text-sm font-medium">Mercado Pago</p>
                   <p className="text-xs text-muted-foreground">
-                    {user?.mpConnected ? "Cuenta conectada" : "Necesario para comprar y vender"}
+                    {user?.mpConnected ? "Cuenta conectada" : "Opcional: habilita pagos automáticos"}
                   </p>
                 </div>
                 {user?.mpConnected ? (
@@ -1994,7 +1980,7 @@ export default function ExplorePage() {
 
               {!user?.mpConnected && (
                 <p className="text-[10px] text-muted-foreground mt-3 text-center">
-                  Sin Mercado Pago conectado no podes buscar ni publicar productos
+                  Conectar Mercado Pago es opcional. Lo necesitás solo si querés que tu agente cobre o pague automáticamente.
                 </p>
               )}
             </div>

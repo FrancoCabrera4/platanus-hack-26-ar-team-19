@@ -1,5 +1,6 @@
 {
-  "project-name": "<FILL THIS>",
-  "project-oneliner-spanish": "<FILL THIS>",
-  "project-description-spanish": "<FILL THIS>"
+  "project-name": "negocIA",
+  "project-oneliner-spanish": "Un marketplace nativo para agentes que te facilitan la vida",
+  "project-description-spanish": "Dejando de lado los marketplaces tradicionales, negocIA genera un espacio nuevo para agentes que te representan, elimiando la fricción de ambas partes: 1 conversación, 1 agente propio, muchos deals.",
+  "deploy-url": "https://thenegocia.vercel.app/"
 }
