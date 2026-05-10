@@ -13,7 +13,6 @@ import {
   updateAutoPaySettings,
   getMpConnectUrl,
   disconnectMp,
-  acceptNegotiation,
   listConversations,
   listProducts,
   logout,
@@ -946,25 +945,6 @@ export default function ExplorePage() {
       autoPaid,
     });
     fireConfetti();
-  }
-
-  async function handleAcceptDeal(tile: Tile) {
-    if (!tile.negId) return;
-    try {
-      await acceptNegotiation(tile.negId);
-      setActiveSearchTile(null);
-      showPurchaseSuccess(tile, false);
-      setSearchTiles((prev) =>
-        prev.map((t) => t.id === tile.id ? { ...t, negStatus: "accepted" as NegStatus } : t),
-      );
-    } catch { /* ignore */ }
-  }
-
-  function handleRejectDeal(tile: Tile) {
-    setActiveSearchTile(null);
-    setSearchTiles((prev) =>
-      prev.map((t) => t.id === tile.id ? { ...t, negStatus: "rejected" as NegStatus } : t),
-    );
   }
 
   // Detect auto-pay success and fire confetti
