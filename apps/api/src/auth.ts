@@ -10,6 +10,7 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
+  mpConnected?: boolean;
   location: string | null;
 };
 
@@ -50,6 +51,7 @@ export function publicUser(user: AuthUser) {
     id: user.id,
     name: user.name,
     email: user.email,
+    mpConnected: user.mpConnected ?? false,
     location: user.location,
   };
 }

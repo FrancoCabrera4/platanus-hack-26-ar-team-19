@@ -10,10 +10,19 @@ import {
   verifyPriceWithMarket,
 } from "./fraud";
 
+export type MatchQuality = "exact" | "close" | "approximate";
+
 export interface MatchCandidate {
   productId: string;
   score: number; // 0..1
   rationale: string;
+  matchQuality: MatchQuality;
+}
+
+function classifyMatchQuality(score: number): MatchQuality {
+  if (score >= 0.9) return "exact";
+  if (score >= 0.75) return "close";
+  return "approximate";
 }
 
 interface ScoringInput {
@@ -146,8 +155,9 @@ const SCORING_SCHEMA = {
           productId: { type: "string" },
           score: { type: "number" },
           rationale: { type: "string" },
+          isExactMatch: { type: "boolean", description: "true ONLY if this is precisely what the buyer asked for (same brand, model, type)" },
         },
-        required: ["productId", "score", "rationale"],
+        required: ["productId", "score", "rationale", "isExactMatch"],
       },
     },
   },
@@ -319,10 +329,14 @@ async function visionRerank(
         );
 
         if (visionResult.matches) {
+          const boostedScore = match.score * (0.6 + visionResult.confidence * 0.4);
           return {
             ...match,
-            score: match.score * (0.6 + visionResult.confidence * 0.4),
+            score: boostedScore,
             rationale: `${match.rationale} | Vision OK (${Math.round(visionResult.confidence * 100)}%): ${visionResult.reason}`,
+            matchQuality: visionResult.confidence >= 0.85 && match.matchQuality === "exact"
+              ? "exact" as MatchQuality
+              : classifyMatchQuality(boostedScore),
           };
         }
         log(`[vision] Rejected "${candidate.title}": ${visionResult.reason}`);
@@ -330,6 +344,7 @@ async function visionRerank(
           ...match,
           score: match.score * 0.15,
           rationale: `${match.rationale} | Vision REJECTED: ${visionResult.reason}`,
+          matchQuality: "approximate" as MatchQuality,
         };
       }),
     );

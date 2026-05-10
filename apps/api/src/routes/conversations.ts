@@ -17,7 +17,6 @@ import type { ChatTurn } from "../llm/gemini";
 import { embedText, toVectorLiteral, upsertProductEmbedding } from "../services/embeddings";
 import { analyzeProductImage, analyzeSearchImage } from "../services/vision";
 import { getPriceReference, type MLPriceRef } from "../services/mercadolibre";
-import { checkProduct } from "../services/fraud";
 import { requireAuth, type AuthUser } from "../auth";
 import { asyncHandler, sseHeaders, sseSend } from "./_sse";
 
@@ -153,26 +152,6 @@ async function completeConversation(
       return {};
     }
 
-    const fraudResult = await checkProduct({
-      title: productState.title,
-      description: productState.description,
-      askPrice: productState.askPrice,
-      category: productState.category ?? null,
-      userId,
-    }).catch((err) => {
-      log("Fraud check failed:", (err as Error).message);
-      return null;
-    });
-
-    if (fraudResult && !fraudResult.safe) {
-      log(`[fraud] Blocked product creation: "${productState.title}" — ${fraudResult.flags.map((f) => f.rule).join(", ")}`);
-      await prisma.conversation.update({
-        where: { id: conversationId },
-        data: { status: "in_progress" },
-      });
-      return {};
-    }
-
     const product = await prisma.product.create({
       data: {
         userId,
@@ -238,7 +217,7 @@ async function completeConversation(
 
 let inventoryCache: string | null = null;
 let inventoryCacheTs = 0;
-const INVENTORY_CACHE_TTL = 60_000;
+const INVENTORY_CACHE_TTL = 30_000;
 
 async function getInventorySummary(): Promise<string> {
   if (inventoryCache && Date.now() - inventoryCacheTs < INVENTORY_CACHE_TTL) return inventoryCache;

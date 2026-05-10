@@ -2,12 +2,18 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import confetti from "canvas-confetti";
 import {
   acceptNegotiation,
   getMe,
   getConversation,
   getNegotiation,
   getSearch,
+  getAutoPaySettings,
+  updateAutoPaySettings,
+  getMpConnectUrl,
+  disconnectMp,
+  acceptNegotiation,
   listConversations,
   listProducts,
   logout,
@@ -17,6 +23,7 @@ import {
   transcribeAudio,
   uploadImage,
   type AuthUser,
+  type AutoPaySettings,
   type ConversationSummary,
   type NegotiationDetail,
   type Product,
@@ -35,11 +42,15 @@ type NegStatus =
 type Tile = {
   id: string;
   title: string;
+  description?: string;
   askPrice?: number;
   imageUrl?: string;
   finalPrice?: number;
   negStatus: NegStatus;
   negId?: string;
+  autoPaid?: boolean;
+  verificationCode?: string | null;
+  messages?: { side: string; action: string; proposedPrice: number | null; content: string }[];
   h: number;
   color: string;
 };
@@ -150,6 +161,19 @@ export default function ExplorePage() {
     finalPrice: number;
     imageUrl?: string;
   } | null>(null);
+  const [showAutoPayModal, setShowAutoPayModal] = useState(false);
+  const [autoPayForm, setAutoPayForm] = useState({
+    enabled: false,
+    maxAmount: "",
+    categories: [] as string[],
+    maxPerSearch: 1,
+  });
+  const [autoPaySaving, setAutoPaySaving] = useState(false);
+  const [autoPayLoaded, setAutoPayLoaded] = useState(false);
+  const [showMpModal, setShowMpModal] = useState(false);
+  const [mpConnecting, setMpConnecting] = useState(false);
+
+  const [purchaseSuccess, setPurchaseSuccess] = useState<{ title: string; imageUrl?: string; price: number; autoPaid: boolean } | null>(null);
   const chatOpen = messages.length > 0;
   const visibleProducts = useMemo(
     () => products.slice(0, visibleProductCount),
@@ -244,11 +268,20 @@ export default function ExplorePage() {
           const newTile: Tile = {
             id: product.id,
             title: product.title,
+            description: product.description ?? undefined,
             askPrice: product.askPrice,
             imageUrl: product.imageUrl ?? undefined,
             finalPrice: neg.finalPrice ?? undefined,
             negStatus: neg.status as NegStatus,
             negId: neg.id,
+            autoPaid: neg.autoPaid,
+            verificationCode: neg.verificationCode,
+            messages: neg.messages?.map((m: { side: string; action: string; proposedPrice: number | null; content: string }) => ({
+              side: m.side,
+              action: m.action,
+              proposedPrice: m.proposedPrice,
+              content: m.content,
+            })),
             h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
             color: TILE_COLORS[i % TILE_COLORS.length]!,
           };
@@ -795,6 +828,103 @@ export default function ExplorePage() {
     }
   }
 
+  async function openAutoPayModal() {
+    setShowAutoPayModal(true);
+    if (!autoPayLoaded) {
+      try {
+        const settings = await getAutoPaySettings();
+        setAutoPayForm({
+          enabled: settings.autoPayEnabled,
+          maxAmount: settings.autoPayMaxAmount?.toString() ?? "",
+          categories: settings.autoPayCategories,
+          maxPerSearch: settings.autoPayMaxPerSearch,
+        });
+        setAutoPayLoaded(true);
+      } catch { /* ignore */ }
+    }
+  }
+
+  async function saveAutoPay() {
+    setAutoPaySaving(true);
+    try {
+      await updateAutoPaySettings({
+        enabled: autoPayForm.enabled,
+        maxAmount: autoPayForm.maxAmount ? Number(autoPayForm.maxAmount) : null,
+        categories: autoPayForm.categories,
+        maxPerSearch: autoPayForm.maxPerSearch,
+      });
+      setShowAutoPayModal(false);
+    } catch { /* ignore */ }
+    setAutoPaySaving(false);
+  }
+
+  function toggleCategory(cat: string) {
+    setAutoPayForm((prev) => ({
+      ...prev,
+      categories: prev.categories.includes(cat)
+        ? prev.categories.filter((c) => c !== cat)
+        : [...prev.categories, cat],
+    }));
+  }
+
+  function fireConfetti() {
+    const duration = 2000;
+    const end = Date.now() + duration;
+    const frame = () => {
+      confetti({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0, y: 0.7 } });
+      confetti({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1, y: 0.7 } });
+      if (Date.now() < end) requestAnimationFrame(frame);
+    };
+    frame();
+  }
+
+  function showPurchaseSuccess(tile: Tile, autoPaid: boolean) {
+    setPurchaseSuccess({
+      title: tile.title,
+      imageUrl: tile.imageUrl,
+      price: tile.finalPrice ?? tile.askPrice ?? 0,
+      autoPaid,
+    });
+    fireConfetti();
+  }
+
+  async function handleAcceptDeal(tile: Tile) {
+    if (!tile.negId) return;
+    try {
+      await acceptNegotiation(tile.negId);
+      setActiveSearchTile(null);
+      showPurchaseSuccess(tile, false);
+      setSearchTiles((prev) =>
+        prev.map((t) => t.id === tile.id ? { ...t, negStatus: "accepted" as NegStatus } : t),
+      );
+    } catch { /* ignore */ }
+  }
+
+  function handleRejectDeal(tile: Tile) {
+    setActiveSearchTile(null);
+    setSearchTiles((prev) =>
+      prev.map((t) => t.id === tile.id ? { ...t, negStatus: "rejected" as NegStatus } : t),
+    );
+  }
+
+  // Detect auto-pay success and fire confetti
+  const prevTilesRef = useRef<Tile[]>([]);
+  useEffect(() => {
+    if (!searching && searchTiles.length === 0) return;
+    for (const tile of searchTiles) {
+      const prev = prevTilesRef.current.find((t) => t.id === tile.id);
+      if (tile.autoPaid && (!prev || !prev.autoPaid)) {
+        showPurchaseSuccess(tile, true);
+        break;
+      }
+      if (tile.negStatus === "awaiting_buyer" && prev?.negStatus !== "awaiting_buyer" && !tile.autoPaid) {
+        // Deal closed, awaiting manual confirmation — scroll into view
+      }
+    }
+    prevTilesRef.current = searchTiles;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTiles, searching]);
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border px-4 h-14 flex items-center justify-between">
@@ -834,28 +964,31 @@ export default function ExplorePage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowUserMenu(false)}
+                  onClick={() => { setShowUserMenu(false); router.push("/dashboard"); }}
                   className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-black/5 transition-colors flex items-center gap-2"
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="text-foreground/50"
-                  >
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                    <rect x="3" y="3" width="7" height="7" />
+                    <rect x="14" y="3" width="7" height="7" />
+                    <rect x="3" y="14" width="7" height="7" />
+                    <rect x="14" y="14" width="7" height="7" />
                   </svg>
-                  Configuración
+                  Dashboard
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowUserMenu(false)}
+                  onClick={() => { setShowUserMenu(false); openAutoPayModal(); }}
+                  className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-black/5 transition-colors flex items-center gap-2"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/50">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                  Auto-Pay
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowUserMenu(false); setShowMpModal(true); }}
                   className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-black/5 transition-colors flex items-center gap-2"
                 >
                   <svg
@@ -875,6 +1008,7 @@ export default function ExplorePage() {
                     <line x1="23" y1="11" x2="17" y2="11" />
                   </svg>
                   Integraciones
+                  {!user?.mpConnected && <span className="ml-auto w-2 h-2 rounded-full bg-destructive" />}
                 </button>
                 <div className="border-t border-black/5" />
                 <button
@@ -929,99 +1063,131 @@ export default function ExplorePage() {
         </div>
       )}
 
-      <div
-        className={`p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""}`}
-      >
-        {tiles.map((item, i) => (
-          <div
-            key={item.id}
-            onClick={() => {
-              if (item.negStatus === "awaiting_buyer" && item.negId) {
-                setDismissedDeals((prev) => {
-                  const next = new Set(prev);
-                  next.delete(item.negId!);
-                  return next;
-                });
-                setPendingDealNegId(item.negId);
-              }
-            }}
-            className="mb-3 break-inside-avoid cursor-pointer group animate-msg-in transition-transform duration-300 ease-out hover:scale-[1.03] hover:-translate-y-1"
-            style={{ animationDelay: searching ? `${i * 0.15}s` : "0s" }}
-          >
+      <div className={`p-4 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""} ${searchTiles.length > 0 || searching ? "flex flex-col gap-4 max-w-2xl mx-auto" : "columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3"}`}>
+        {tiles.map((item, i) => {
+          const isSearchMode = searchTiles.length > 0 || searching;
+          const borderColor = item.negStatus === "accepted" || item.negStatus === "awaiting_buyer"
+            ? "ring-2 ring-green-500"
+            : item.negStatus === "rejected" || item.negStatus === "timed_out" || item.negStatus === "error"
+            ? "ring-2 ring-red-400"
+            : item.negStatus === "running"
+            ? "ring-2 ring-primary animate-pulse"
+            : "";
+
+          if (isSearchMode) {
+            return (
+              <div
+                key={item.id}
+                className={`rounded-2xl overflow-hidden bg-white shadow-lg border border-border animate-msg-in ${borderColor}`}
+                style={{ animationDelay: `${i * 0.2}s` }}
+              >
+                <div className="flex gap-0">
+                  <div className="w-40 h-40 shrink-0 bg-muted relative">
+                    {item.imageUrl ? (
+                      <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <span className="text-3xl opacity-20">📦</span>
+                      </div>
+                    )}
+                    {item.negStatus === "accepted" || item.negStatus === "awaiting_buyer" ? (
+                      <span className="absolute top-2 left-2 bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Cerrado</span>
+                    ) : item.negStatus === "rejected" || item.negStatus === "timed_out" || item.negStatus === "error" ? (
+                      <span className="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Sin acuerdo</span>
+                    ) : item.negStatus === "running" || item.negStatus === "pending" ? (
+                      <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">Negociando...</span>
+                    ) : null}
+                  </div>
+                  <div className="flex-1 p-3 flex flex-col min-w-0">
+                    <p className="text-sm font-medium text-foreground line-clamp-1">{item.title}</p>
+                    {item.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{item.description}</p>
+                    )}
+                    <div className="flex items-center gap-2 mt-1">
+                      {item.askPrice != null && (
+                        <span className="text-xs text-muted-foreground">{formatARS(item.askPrice)}</span>
+                      )}
+                      {item.finalPrice != null && (
+                        <span className="text-xs font-bold text-green-600">{formatARS(item.finalPrice)}</span>
+                      )}
+                    </div>
+                    {item.messages && item.messages.length > 0 && (
+                      <div className="mt-2 flex-1 overflow-hidden space-y-1">
+                        {item.messages.slice(-3).map((msg, mi) => (
+                          <div key={mi} className={`flex ${msg.side === "buyer" ? "justify-end" : "justify-start"}`}>
+                            <div className={`px-2 py-0.5 rounded-lg max-w-[85%] ${
+                              msg.side === "buyer" ? "bg-primary/20 text-foreground" : "bg-muted text-foreground"
+                            }`}>
+                              <span className="text-[10px] opacity-60 mr-1">{msg.side === "buyer" ? "🤖" : "🏷️"}</span>
+                              <span className="text-[11px]">{msg.content}</span>
+                              {msg.proposedPrice != null && (
+                                <span className="text-[10px] font-bold ml-1">{formatARS(msg.proposedPrice)}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {item.negStatus === "awaiting_buyer" && !item.autoPaid && (
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => handleAcceptDeal(item)}
+                          className="flex-1 h-7 bg-green-500 text-white text-xs font-medium rounded-lg hover:bg-green-600 transition-colors"
+                        >
+                          Aceptar {item.finalPrice != null ? formatARS(item.finalPrice) : ""}
+                        </button>
+                        <button
+                          onClick={() => handleRejectDeal(item)}
+                          className="h-7 px-3 border border-red-300 text-red-500 text-xs font-medium rounded-lg hover:bg-red-50 transition-colors"
+                        >
+                          Rechazar
+                        </button>
+                      </div>
+                    )}
+                    {item.autoPaid && (
+                      <div className="mt-2 flex items-center gap-1.5">
+                        <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Auto-pagado</span>
+                        {item.verificationCode && (
+                          <span className="text-[10px] bg-muted px-2 py-0.5 rounded-full font-mono">{item.verificationCode}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          return (
             <div
-              className="rounded-xl overflow-hidden relative"
-              style={{ backgroundColor: item.color, height: item.h }}
+              key={item.id}
+              className="mb-3 break-inside-avoid cursor-pointer group animate-msg-in transition-transform duration-300 ease-out hover:scale-[1.03] hover:-translate-y-1"
+              style={{ animationDelay: "0s" }}
             >
-              {item.imageUrl ? (
-                <img
-                  src={item.imageUrl}
-                  alt={item.title}
-                  loading="lazy"
-                  className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110"
-                />
-              ) : (
-                <div style={{ height: item.h }} />
-              )}
-              {item.negStatus === "accepted" && (
-                <span className="absolute top-2 left-2 bg-accent text-accent-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  Cerrado
-                </span>
-              )}
-              {item.negStatus === "rejected" && (
-                <span className="absolute top-2 left-2 bg-destructive text-destructive-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  Sin acuerdo
-                </span>
-              )}
-              {item.negStatus === "awaiting_buyer" && (
-                <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
-                  Tu confirmación
-                </span>
-              )}
-              {(item.negStatus === "running" ||
-                item.negStatus === "pending") && (
-                <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
-                  Negociando...
-                </span>
+              <div
+                className="rounded-xl overflow-hidden relative"
+                style={{ backgroundColor: item.color, height: item.h }}
+              >
+                {item.imageUrl ? (
+                  <img src={item.imageUrl} alt={item.title} loading="lazy" className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110" />
+                ) : (
+                  <div style={{ height: item.h }} />
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
+                {item.title}
+              </p>
+              {item.askPrice != null && (
+                <p className="text-xs text-foreground/80 font-medium px-0.5 mt-0.5">{formatARS(item.askPrice)}</p>
               )}
             </div>
-            <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
-              {item.title}
-            </p>
-            <div className="flex items-center gap-1.5 px-0.5 mt-0.5">
-              {item.finalPrice != null ? (
-                <span className="text-xs text-accent font-bold">
-                  {formatARS(item.finalPrice)}
-                </span>
-              ) : item.askPrice != null ? (
-                <span className="text-xs text-foreground/80 font-medium">
-                  {formatARS(item.askPrice)}
-                </span>
-              ) : null}
-              {item.negId && (
-                <button
-                  onClick={() => openNegotiation(item.negId!)}
-                  className="text-[10px] text-primary hover:underline"
-                >
-                  Ver negociación
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {searching && tiles.length === 0 && (
-          <div className="mb-3 break-inside-avoid animate-msg-in">
-            <div
-              className="rounded-xl bg-border animate-pulse flex items-center justify-center"
-              style={{ height: 280 }}
-            >
-              <img
-                src="/logo-icon.svg"
-                alt=""
-                className="h-8 w-8 grayscale opacity-20 animate-thinking"
-              />
+          <div className={searchTiles.length > 0 || searching ? "" : "mb-3 break-inside-avoid"}>
+            <div className="rounded-xl bg-border animate-pulse flex items-center justify-center animate-msg-in" style={{ height: 160 }}>
+              <img src="/logo-icon.svg" alt="" className="h-8 w-8 grayscale opacity-20 animate-thinking" />
             </div>
-            <div className="mt-1.5 px-0.5 h-3 w-3/4 rounded bg-border animate-pulse" />
-            <div className="mt-1 px-0.5 h-2.5 w-1/2 rounded bg-border animate-pulse" />
           </div>
         )}
       </div>
@@ -1040,11 +1206,11 @@ export default function ExplorePage() {
       {/* Chat container */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4 flex items-end gap-2 transition-all duration-300 ease-out">
         {/* History button */}
-        <div className="shrink-0 self-end mb-[7px]">
+        <div className="shrink-0 self-end mb-[5px]">
           <button
             type="button"
             onClick={toggleHistory}
-            className="liquid-glass w-[45px] h-[45px] rounded-full flex items-center justify-center hover:scale-105 transition-transform"
+            className="liquid-glass w-[44px] h-[44px] rounded-full flex items-center justify-center hover:scale-105 transition-transform"
             title="Historial de chats"
           >
             <svg
@@ -1449,22 +1615,21 @@ export default function ExplorePage() {
                   </svg>
                 </button>
               )}
-              <form
-                onSubmit={handleSend}
-                className={
-                  chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"
-                }
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageSelect}
-                  className="hidden"
-                />
-                <div
-                  className={`flex items-end gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}
-                >
+              {!user?.mpConnected ? (
+                <div className="px-3 py-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowMpModal(true)}
+                    className="w-full flex items-center justify-center gap-2 h-10 rounded-full border border-[#009ee3]/30 bg-[#009ee3]/5 hover:bg-[#009ee3]/10 transition-colors"
+                  >
+                    <img src="/mp-handshake.svg" alt="" className="h-5" />
+                    <span className="text-sm text-[#009ee3] font-medium">Conecta Mercado Pago para empezar</span>
+                  </button>
+                </div>
+              ) : (
+              <form onSubmit={handleSend} className={chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"}>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+                <div className={`flex items-center gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}>
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -1557,13 +1722,7 @@ export default function ExplorePage() {
                         disabled={streaming || !!transcript}
                         autoFocus
                         className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground/40 focus:outline-none resize-none disabled:opacity-50"
-                        style={{
-                          height: "32px",
-                          maxHeight: "160px",
-                          lineHeight: "20px",
-                          paddingTop: "6px",
-                          paddingBottom: "6px",
-                        }}
+                        style={{ height: "32px", maxHeight: "160px", lineHeight: "32px", paddingTop: "0px", paddingBottom: "0px" }}
                       />
                       {streaming ? (
                         <button
@@ -1630,6 +1789,7 @@ export default function ExplorePage() {
                   )}
                 </div>
               </form>
+              )}
             </>
           )}
         </div>
@@ -1721,6 +1881,204 @@ export default function ExplorePage() {
             className="max-h-[80vh] max-w-full rounded-2xl shadow-2xl object-contain animate-scale-in"
             onClick={(e) => e.stopPropagation()}
           />
+        </div>
+      )}
+
+      {showMpModal && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4 animate-fade-in" onClick={() => setShowMpModal(false)}>
+          <div className="bg-background rounded-2xl w-full max-w-sm shadow-2xl border border-border animate-scale-in" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-border flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Integraciones</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Conecta tu cuenta para operar</p>
+              </div>
+              <button onClick={() => setShowMpModal(false)} className="text-muted-foreground hover:text-foreground">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="flex flex-col items-center gap-3">
+                <img src="/mercado-pago.svg" alt="Mercado Pago" className="h-16 w-16" />
+                <div className="text-center">
+                  <p className="text-sm font-medium">Mercado Pago</p>
+                  <p className="text-xs text-muted-foreground">
+                    {user?.mpConnected ? "Cuenta conectada" : "Necesario para comprar y vender"}
+                  </p>
+                </div>
+                {user?.mpConnected ? (
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 text-accent text-xs font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent" />
+                    Activo
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-destructive/10 text-destructive text-xs font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-destructive" />
+                    Inactivo
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-6">
+                {user?.mpConnected ? (
+                  <button
+                    onClick={async () => {
+                      setMpConnecting(true);
+                      try {
+                        await disconnectMp();
+                        setUser((u) => u ? { ...u, mpConnected: false } : u);
+                      } catch { /* ignore */ }
+                      setMpConnecting(false);
+                    }}
+                    disabled={mpConnecting}
+                    className="w-full h-10 border border-destructive text-destructive rounded-lg text-sm font-medium hover:bg-destructive/5 transition-colors disabled:opacity-50"
+                  >
+                    {mpConnecting ? "Desconectando..." : "Desconectar cuenta"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      setMpConnecting(true);
+                      try {
+                        const { url } = await getMpConnectUrl();
+                        window.location.href = url;
+                      } catch {
+                        setMpConnecting(false);
+                      }
+                    }}
+                    disabled={mpConnecting}
+                    className="w-full h-10 bg-[#009ee3] text-white rounded-lg text-sm font-medium hover:bg-[#007eb5] transition-colors disabled:opacity-50"
+                  >
+                    {mpConnecting ? "Conectando..." : "Conectar Mercado Pago"}
+                  </button>
+                )}
+              </div>
+
+              {!user?.mpConnected && (
+                <p className="text-[10px] text-muted-foreground mt-3 text-center">
+                  Sin Mercado Pago conectado no podes buscar ni publicar productos
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {purchaseSuccess && (
+        <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-4 animate-fade-in" onClick={() => setPurchaseSuccess(null)}>
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl animate-scale-in text-center p-8" onClick={(e) => e.stopPropagation()}>
+            {purchaseSuccess.imageUrl && (
+              <img src={purchaseSuccess.imageUrl} alt="" className="w-32 h-32 object-cover rounded-2xl mx-auto mb-4 shadow-lg" />
+            )}
+            <p className="text-2xl font-bold text-foreground mb-1">Compra exitosa!</p>
+            <p className="text-sm text-muted-foreground mb-2">{purchaseSuccess.title}</p>
+            <p className="text-xl font-bold text-green-600 mb-4">{formatARS(purchaseSuccess.price)}</p>
+            {purchaseSuccess.autoPaid && (
+              <span className="inline-block px-3 py-1 bg-green-100 text-green-700 text-xs rounded-full font-medium mb-4">Pagado automaticamente</span>
+            )}
+            <button
+              onClick={() => setPurchaseSuccess(null)}
+              className="w-full h-10 bg-foreground text-background rounded-xl text-sm font-medium hover:bg-foreground/90 transition-colors"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showAutoPayModal && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4 animate-fade-in" onClick={() => setShowAutoPayModal(false)}>
+          <div className="bg-background rounded-2xl w-full max-w-md shadow-2xl border border-border animate-scale-in" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-border flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Auto-Pay</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Tu agente paga cuando cierra un trato</p>
+              </div>
+              <button onClick={() => setShowAutoPayModal(false)} className="text-muted-foreground hover:text-foreground">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Activar Auto-Pay</p>
+                  <p className="text-xs text-muted-foreground">El agente paga sin pedirte confirmacion</p>
+                </div>
+                <button
+                  onClick={() => setAutoPayForm((p) => ({ ...p, enabled: !p.enabled }))}
+                  className={`w-11 h-6 rounded-full transition-colors relative flex-shrink-0 ${autoPayForm.enabled ? "bg-primary" : "bg-border"}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${autoPayForm.enabled ? "translate-x-5" : "translate-x-0"}`} />
+                </button>
+              </div>
+
+              <div className={autoPayForm.enabled ? "" : "opacity-40 pointer-events-none"}>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Monto maximo por compra (ARS)</label>
+                <input
+                  type="number"
+                  placeholder="Sin limite"
+                  value={autoPayForm.maxAmount}
+                  onChange={(e) => setAutoPayForm((p) => ({ ...p, maxAmount: e.target.value }))}
+                  className="w-full h-10 px-3 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">Dejalo vacio para no poner limite</p>
+              </div>
+
+              <div className={autoPayForm.enabled ? "" : "opacity-40 pointer-events-none"}>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Categorias permitidas</label>
+                <div className="flex flex-wrap gap-2">
+                  {["electronics", "vehicles", "apparel", "furniture", "home-goods", "sporting-goods", "musical-instruments", "toys-games"].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => toggleCategory(cat)}
+                      className={`px-3 py-1.5 rounded-full text-xs transition-colors border ${
+                        autoPayForm.categories.includes(cat)
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background text-muted-foreground border-border hover:border-foreground/30"
+                      }`}
+                    >
+                      {cat === "electronics" ? "Electronica" :
+                       cat === "vehicles" ? "Vehiculos" :
+                       cat === "apparel" ? "Ropa" :
+                       cat === "furniture" ? "Muebles" :
+                       cat === "home-goods" ? "Hogar" :
+                       cat === "sporting-goods" ? "Deportes" :
+                       cat === "musical-instruments" ? "Instrumentos" :
+                       "Juguetes"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">Sin seleccion = todas las categorias</p>
+              </div>
+
+              <div className={autoPayForm.enabled ? "" : "opacity-40 pointer-events-none"}>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Max compras por busqueda</label>
+                <div className="flex gap-2">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => setAutoPayForm((p) => ({ ...p, maxPerSearch: n }))}
+                      className={`w-10 h-10 rounded-lg text-sm font-medium transition-colors border ${
+                        autoPayForm.maxPerSearch === n
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background text-muted-foreground border-border hover:border-foreground/30"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-border">
+              <button
+                onClick={saveAutoPay}
+                disabled={autoPaySaving}
+                className="w-full h-10 bg-foreground text-background rounded-lg text-sm font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50"
+              >
+                {autoPaySaving ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

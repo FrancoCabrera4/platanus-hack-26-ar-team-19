@@ -10,6 +10,7 @@ function publicProduct<T extends { negotiationStrategy: string | null }>(product
 }
 
 productsRouter.get("/", async (req, res) => {
+  res.set("Cache-Control", "no-store");
   const status = (req.query.status as string | undefined) ?? "active";
   const category = req.query.category as string | undefined;
   const products = await prisma.product.findMany({
