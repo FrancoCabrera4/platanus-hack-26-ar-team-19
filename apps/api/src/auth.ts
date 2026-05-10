@@ -4,11 +4,13 @@ import prisma from "@repo/db";
 
 const SESSION_COOKIE = "am_session";
 const SESSION_DAYS = 7;
+const SESSION_MAX_AGE_MS = SESSION_DAYS * 24 * 60 * 60 * 1000;
 
 export type AuthUser = {
   id: string;
   name: string;
   email: string;
+  mpConnected?: boolean;
   location: string | null;
 };
 
@@ -24,11 +26,32 @@ function addTime(ms: number): Date {
   return new Date(Date.now() + ms);
 }
 
+function isHttpsOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  try {
+    return new URL(origin).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function sessionCookieOptions() {
+  const crossSite = isHttpsOrigin(process.env.WEB_ORIGIN);
+  return {
+    httpOnly: true,
+    sameSite: crossSite ? "none" as const : "lax" as const,
+    secure: crossSite || process.env.NODE_ENV === "production",
+    maxAge: SESSION_MAX_AGE_MS,
+    path: "/",
+  };
+}
+
 export function publicUser(user: AuthUser) {
   return {
     id: user.id,
     name: user.name,
     email: user.email,
+    mpConnected: user.mpConnected ?? false,
     location: user.location,
   };
 }
@@ -67,22 +90,12 @@ function parseCookies(header: string | undefined): Record<string, string> {
 }
 
 function setSessionCookie(res: Response, token: string) {
-  res.cookie(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
-    path: "/",
-  });
+  res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
 }
 
 export function clearSessionCookie(res: Response) {
-  res.clearCookie(SESSION_COOKIE, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-  });
+  const { maxAge: _maxAge, ...options } = sessionCookieOptions();
+  res.clearCookie(SESSION_COOKIE, options);
 }
 
 export async function createSession(res: Response, userId: string): Promise<void> {
@@ -91,7 +104,7 @@ export async function createSession(res: Response, userId: string): Promise<void
     data: {
       userId,
       tokenHash: hashToken(token),
-      expiresAt: addTime(SESSION_DAYS * 24 * 60 * 60 * 1000),
+      expiresAt: addTime(SESSION_MAX_AGE_MS),
     },
   });
   setSessionCookie(res, token);

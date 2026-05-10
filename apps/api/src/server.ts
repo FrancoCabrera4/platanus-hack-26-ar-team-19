@@ -14,6 +14,8 @@ import { jobsRouter } from "./routes/jobs";
 import { authRouter } from "./routes/auth";
 import { transcriptionsRouter } from "./routes/transcriptions";
 import { uploadsDir, uploadsRouter } from "./routes/uploads";
+import { paymentsRouter } from "./routes/payments";
+import { dashboardRouter } from "./routes/dashboard";
 import { log } from "@repo/logger";
 
 export const createServer = (): Express => {
@@ -39,7 +41,9 @@ export const createServer = (): Express => {
     .use("/shipping", shippingRouter)
     .use("/jobs", jobsRouter)
     .use("/transcriptions", transcriptionsRouter)
-    .use("/uploads", uploadsRouter);
+    .use("/uploads", uploadsRouter)
+    .use("/payments", paymentsRouter)
+    .use("/dashboard", dashboardRouter);
 
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     log("ERROR", err.message, err.stack);
