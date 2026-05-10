@@ -189,9 +189,7 @@ export default function OnboardingPage() {
             </p>
             <div className="rounded-lg border border-border p-6 mb-6">
               <div className="flex items-center gap-4 mb-5">
-                <div className="w-12 h-12 rounded-lg bg-[#009ee3] flex items-center justify-center">
-                  <span className="text-white text-lg font-bold">MP</span>
-                </div>
+                <img src="/mercado-pago.svg" alt="Mercado Pago" className="w-12 h-12" />
                 <div>
                   <p className="font-semibold">Mercado Pago</p>
                   <p className="text-sm text-muted-foreground">
