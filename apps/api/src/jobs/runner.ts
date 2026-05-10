@@ -1,6 +1,10 @@
 import prisma from "@repo/db";
 import { log } from "@repo/logger";
-import { findMatches, type MatchQuality } from "../services/matching";
+import {
+  findMatches,
+  matchCandidatesFromRetrieval,
+  type MatchQuality,
+} from "../services/matching";
 import { runNegotiation } from "../services/negotiation";
 import { tryAutoPay } from "../services/auto-pay";
 
@@ -90,11 +94,14 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
     data: { status: "running" },
   });
 
-  const matches = await findMatches(payload.searchId, payload.topN ?? 5);
-  log(`[runner] Found ${matches.length} matches for search ${payload.searchId}: ${matches.map((m) => `${m.productId.slice(0, 8)}(${m.score.toFixed(2)})`).join(", ")}`);
-
   const search = await prisma.buyerSearch.findUnique({ where: { id: payload.searchId } });
   if (!search) throw new Error(`Search ${payload.searchId} not found`);
+
+  const retrieval = await findMatches(payload.searchId, payload.topN ?? 5);
+  const matches = matchCandidatesFromRetrieval(retrieval, search.maxPrice);
+  log(
+    `[runner] Found ${matches.length} matches for search ${payload.searchId}: ${matches.map((m) => `${m.productId.slice(0, 8)}(${m.score.toFixed(2)})`).join(", ")}`,
+  );
 
   const sortedMatches = [...matches].sort((a, b) => b.score - a.score);
   const bestMatchQuality: MatchQuality | "no_match" = sortedMatches.length > 0
@@ -105,11 +112,6 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
   let successfulNegotiation: RunSearchJobResult["successfulNegotiation"] = null;
 
   for (const m of sortedMatches) {
-    if (successfulNegotiation) {
-      log(`[runner] Skipping ${m.productId.slice(0, 8)} — already have a deal`);
-      continue;
-    }
-
     const product = await prisma.product.findUnique({ where: { id: m.productId } });
     if (!product) continue;
 
@@ -125,12 +127,14 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
     });
 
     if (result.status === "awaiting_buyer" && result.finalPrice !== null) {
-      successfulNegotiation = {
-        negotiationId: result.negotiationId,
-        productId: m.productId,
-        finalPrice: result.finalPrice,
-        matchQuality: m.matchQuality,
-      };
+      if (!successfulNegotiation) {
+        successfulNegotiation = {
+          negotiationId: result.negotiationId,
+          productId: m.productId,
+          finalPrice: result.finalPrice,
+          matchQuality: m.matchQuality,
+        };
+      }
       log(`[runner] Deal closed! ${m.productId.slice(0, 8)} at $${result.finalPrice} (${m.matchQuality})`);
 
       const autoPaid = await tryAutoPay(

@@ -92,7 +92,7 @@ Turns remaining (after this one): ${ctx.turnsRemaining}
 Decide your move now. Use realistic ARS amounts; avoid tiny changes and keep the conversation moving toward a close.`;
 
   const history: ChatTurn[] = [{ role: "user", content: userPrompt }];
-  const raw = await generateJSON<NegotiatorMove | { reply: NegotiatorMove }>({
+  const move = await generateJSON<NegotiatorMove>({
     system: SYSTEM,
     history,
     jsonSchema: SCHEMA,
