@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { saveCard } from "@/lib/api";
+import { saveCard, getMe } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 const MP_PUBLIC_KEY = process.env.NEXT_PUBLIC_MP_PUBLIC_KEY || "";
@@ -55,18 +55,29 @@ export default function OnboardingPage() {
   });
   const router = useRouter();
 
-  // Detect MP OAuth callback
+  // Detect state from DB + OAuth callback params
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const mpResult = params.get("mp");
-    if (mpResult === "ok") {
-      setMpConnected(true);
-      setStep("card");
-      window.history.replaceState({}, "", "/onboarding");
-    } else if (mpResult === "error") {
-      setStep("mercadopago");
-      window.history.replaceState({}, "", "/onboarding");
-    }
+
+    getMe().then((user) => {
+      if (!user) {
+        router.replace("/login");
+        return;
+      }
+      if (mpResult === "ok" || user.mpConnected) {
+        setMpConnected(true);
+        setStep("card");
+      } else if (mpResult === "error") {
+        setStep("mercadopago");
+      }
+      if (mpResult) {
+        window.history.replaceState({}, "", "/onboarding");
+      }
+    }).catch(() => {
+      router.replace("/login");
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load MercadoPago.js SDK
