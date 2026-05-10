@@ -78,7 +78,7 @@ const TILE_COLORS = [
   "hsl(220 14% 90%)",
   "hsl(220 14% 92%)",
 ];
-const PRODUCTS_PAGE_SIZE = 10000;
+const PRODUCTS_PAGE_SIZE = 30;
 
 function productsToTiles(products: Product[]): Tile[] {
   return products.map((product, i) => ({
@@ -90,6 +90,25 @@ function productsToTiles(products: Product[]): Tile[] {
     h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
     color: TILE_COLORS[i % TILE_COLORS.length]!,
   }));
+}
+
+function splitTilesIntoColumns<T extends { h: number }>(
+  items: T[],
+  columnCount: number,
+): T[][] {
+  const columns = Array.from({ length: columnCount }, () => [] as T[]);
+  const heights = Array.from({ length: columnCount }, () => 0);
+
+  for (const item of items) {
+    let targetColumn = 0;
+    for (let i = 1; i < heights.length; i++) {
+      if (heights[i]! < heights[targetColumn]!) targetColumn = i;
+    }
+    columns[targetColumn]!.push(item);
+    heights[targetColumn] += item.h;
+  }
+
+  return columns;
 }
 
 function formatARS(n: number): string {
@@ -128,8 +147,9 @@ export default function ExplorePage() {
   const [authLoading, setAuthLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
-  const [visibleProductCount, setVisibleProductCount] =
-    useState(PRODUCTS_PAGE_SIZE);
+  const [hasMoreProducts, setHasMoreProducts] = useState(true);
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
+  const [columnCount, setColumnCount] = useState(2);
   const [searchTiles, setSearchTiles] = useState<Tile[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchStatus, setSearchStatus] = useState("");
@@ -152,6 +172,8 @@ export default function ExplorePage() {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number>(0);
+  const productOffsetRef = useRef(0);
+  const loadingProductsRef = useRef(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [activeNeg, setActiveNeg] = useState<NegotiationDetail | null>(null);
   const [pendingDealNegId, setPendingDealNegId] = useState<string | null>(null);
@@ -175,15 +197,17 @@ export default function ExplorePage() {
 
   const [purchaseSuccess, setPurchaseSuccess] = useState<{ title: string; imageUrl?: string; price: number; autoPaid: boolean } | null>(null);
   const chatOpen = messages.length > 0;
-  const visibleProducts = useMemo(
-    () => products.slice(0, visibleProductCount),
-    [products, visibleProductCount],
-  );
-  const browseTiles =
-    products.length > 0 ? productsToTiles(visibleProducts) : [];
+  const browseTiles = products.length > 0 ? productsToTiles(products) : [];
   const tiles = searchTiles.length > 0 || searching ? searchTiles : browseTiles;
+  const tileColumns = useMemo(
+    () => splitTilesIntoColumns(tiles, columnCount),
+    [tiles, columnCount],
+  );
+  const skeletonColumns = useMemo(
+    () => splitTilesIntoColumns(SKELETON_TILES, columnCount),
+    [columnCount],
+  );
   const isLoadingProducts = !productsLoaded && !authLoading;
-  const hasMoreProducts = visibleProductCount < products.length;
 
   useEffect(() => {
     getMe()
@@ -200,15 +224,53 @@ export default function ExplorePage() {
       .finally(() => setAuthLoading(false));
   }, [router]);
 
-  const refreshProducts = useCallback(() => {
-    listProducts()
-      .then((nextProducts) => {
-        setProducts(nextProducts);
-        setVisibleProductCount(PRODUCTS_PAGE_SIZE);
-      })
-      .catch(() => {})
-      .finally(() => setProductsLoaded(true));
+  useEffect(() => {
+    const updateColumnCount = () => {
+      if (window.matchMedia("(min-width: 1024px)").matches) {
+        setColumnCount(5);
+      } else if (window.matchMedia("(min-width: 768px)").matches) {
+        setColumnCount(4);
+      } else if (window.matchMedia("(min-width: 640px)").matches) {
+        setColumnCount(3);
+      } else {
+        setColumnCount(2);
+      }
+    };
+
+    updateColumnCount();
+    window.addEventListener("resize", updateColumnCount);
+    return () => window.removeEventListener("resize", updateColumnCount);
   }, []);
+
+  const loadProductsPage = useCallback(async (reset = false) => {
+    if (loadingProductsRef.current) return;
+    loadingProductsRef.current = true;
+    if (!reset) setLoadingMoreProducts(true);
+
+    const offset = reset ? 0 : productOffsetRef.current;
+    try {
+      const nextProducts = await listProducts({
+        limit: PRODUCTS_PAGE_SIZE,
+        offset,
+      });
+      productOffsetRef.current = offset + nextProducts.length;
+      setProducts((prev) => (reset ? nextProducts : [...prev, ...nextProducts]));
+      setHasMoreProducts(nextProducts.length === PRODUCTS_PAGE_SIZE);
+    } catch {
+      if (reset) setHasMoreProducts(false);
+    } finally {
+      loadingProductsRef.current = false;
+      setLoadingMoreProducts(false);
+      setProductsLoaded(true);
+    }
+  }, []);
+
+  const refreshProducts = useCallback(() => {
+    setProductsLoaded(false);
+    productOffsetRef.current = 0;
+    setHasMoreProducts(true);
+    void loadProductsPage(true);
+  }, [loadProductsPage]);
 
   useEffect(() => {
     refreshProducts();
@@ -421,21 +483,19 @@ export default function ExplorePage() {
 
   useEffect(() => {
     const marker = loadMoreRef.current;
-    if (!marker || !hasMoreProducts) return;
+    if (!productsLoaded || !marker || !hasMoreProducts) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (!entry?.isIntersecting) return;
-        setVisibleProductCount((count) =>
-          Math.min(count + PRODUCTS_PAGE_SIZE, products.length),
-        );
+        void loadProductsPage();
       },
-      { rootMargin: "200px 0px" },
+      { rootMargin: "900px 0px" },
     );
 
     observer.observe(marker);
     return () => observer.disconnect();
-  }, [hasMoreProducts, products.length]);
+  }, [hasMoreProducts, loadProductsPage, products.length, productsLoaded]);
 
   async function handleLogout() {
     await logout();
@@ -922,7 +982,7 @@ export default function ExplorePage() {
       }
     }
     prevTilesRef.current = searchTiles;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTiles, searching]);
 
   return (
@@ -1048,157 +1108,141 @@ export default function ExplorePage() {
               className="h-12 w-12 animate-pulse"
             />
           </div>
-          <div className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28">
-            {SKELETON_TILES.map((s) => (
-              <div key={s.id} className="mb-3 break-inside-avoid">
-                <div
-                  className="rounded-xl bg-muted animate-pulse"
-                  style={{ height: s.h }}
-                />
-                <div className="mt-1.5 h-3 w-3/4 rounded bg-muted animate-pulse" />
-                <div className="mt-1 h-2.5 w-1/2 rounded bg-muted animate-pulse" />
+          <div
+            className="p-4 grid gap-3 pb-28"
+            style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
+          >
+            {skeletonColumns.map((column, columnIndex) => (
+              <div key={columnIndex} className="space-y-3">
+                {column.map((s) => (
+                  <div key={s.id}>
+                    <div
+                      className="rounded-xl bg-muted animate-pulse"
+                      style={{ height: s.h }}
+                    />
+                    <div className="mt-1.5 h-3 w-3/4 rounded bg-muted animate-pulse" />
+                    <div className="mt-1 h-2.5 w-1/2 rounded bg-muted animate-pulse" />
+                  </div>
+                ))}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div className={`p-4 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""} ${searchTiles.length > 0 || searching ? "flex flex-col gap-4 max-w-2xl mx-auto" : "columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3"}`}>
-        {tiles.map((item, i) => {
-          const isSearchMode = searchTiles.length > 0 || searching;
-          const borderColor = item.negStatus === "accepted" || item.negStatus === "awaiting_buyer"
-            ? "ring-2 ring-green-500"
-            : item.negStatus === "rejected" || item.negStatus === "timed_out" || item.negStatus === "error"
-            ? "ring-2 ring-red-400"
-            : item.negStatus === "running"
-            ? "ring-2 ring-primary animate-pulse"
-            : "";
-
-          if (isSearchMode) {
-            return (
+      <div
+        className={`p-4 grid gap-3 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""}`}
+        style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
+      >
+        {tileColumns.map((column, columnIndex) => (
+          <div key={columnIndex} className="space-y-3">
+            {column.map((item, itemIndex) => (
               <div
                 key={item.id}
-                className={`rounded-2xl overflow-hidden bg-white shadow-lg border border-border animate-msg-in ${borderColor}`}
-                style={{ animationDelay: `${i * 0.2}s` }}
+                onClick={() => {
+                  if (item.negStatus === "awaiting_buyer" && item.negId) {
+                    setDismissedDeals((prev) => {
+                      const next = new Set(prev);
+                      next.delete(item.negId!);
+                      return next;
+                    });
+                    setPendingDealNegId(item.negId);
+                  }
+                }}
+                className="cursor-pointer group animate-msg-in transition-transform duration-300 ease-out hover:scale-[1.03] hover:-translate-y-1"
+                style={{
+                  animationDelay: searching
+                    ? `${(columnIndex + itemIndex) * 0.15}s`
+                    : "0s",
+                }}
               >
-                <div className="flex gap-0">
-                  <div className="w-40 h-40 shrink-0 bg-muted relative">
-                    {item.imageUrl ? (
-                      <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <span className="text-3xl opacity-20">📦</span>
-                      </div>
+                <div
+                  className="rounded-xl overflow-hidden relative"
+                  style={{ backgroundColor: item.color, height: item.h }}
+                >
+                  {item.imageUrl ? (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.title}
+                      loading="lazy"
+                      className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110"
+                    />
+                  ) : (
+                    <div style={{ height: item.h }} />
+                  )}
+                  {item.negStatus === "accepted" && (
+                    <span className="absolute top-2 left-2 bg-accent text-accent-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      Cerrado
+                    </span>
+                  )}
+                  {item.negStatus === "rejected" && (
+                    <span className="absolute top-2 left-2 bg-destructive text-destructive-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      Sin acuerdo
+                    </span>
+                  )}
+                  {item.negStatus === "awaiting_buyer" && (
+                    <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                      Tu confirmación
+                    </span>
+                  )}
+                  {(item.negStatus === "running" ||
+                    item.negStatus === "pending") && (
+                      <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                        Negociando...
+                      </span>
                     )}
-                    {item.negStatus === "accepted" || item.negStatus === "awaiting_buyer" ? (
-                      <span className="absolute top-2 left-2 bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Cerrado</span>
-                    ) : item.negStatus === "rejected" || item.negStatus === "timed_out" || item.negStatus === "error" ? (
-                      <span className="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Sin acuerdo</span>
-                    ) : item.negStatus === "running" || item.negStatus === "pending" ? (
-                      <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">Negociando...</span>
-                    ) : null}
-                  </div>
-                  <div className="flex-1 p-3 flex flex-col min-w-0">
-                    <p className="text-sm font-medium text-foreground line-clamp-1">{item.title}</p>
-                    {item.description && (
-                      <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{item.description}</p>
-                    )}
-                    <div className="flex items-center gap-2 mt-1">
-                      {item.askPrice != null && (
-                        <span className="text-xs text-muted-foreground">{formatARS(item.askPrice)}</span>
-                      )}
-                      {item.finalPrice != null && (
-                        <span className="text-xs font-bold text-green-600">{formatARS(item.finalPrice)}</span>
-                      )}
-                    </div>
-                    {item.messages && item.messages.length > 0 && (
-                      <div className="mt-2 flex-1 overflow-hidden space-y-1">
-                        {item.messages.slice(-3).map((msg, mi) => (
-                          <div key={mi} className={`flex ${msg.side === "buyer" ? "justify-end" : "justify-start"}`}>
-                            <div className={`px-2 py-0.5 rounded-lg max-w-[85%] ${
-                              msg.side === "buyer" ? "bg-primary/20 text-foreground" : "bg-muted text-foreground"
-                            }`}>
-                              <span className="text-[10px] opacity-60 mr-1">{msg.side === "buyer" ? "🤖" : "🏷️"}</span>
-                              <span className="text-[11px]">{msg.content}</span>
-                              {msg.proposedPrice != null && (
-                                <span className="text-[10px] font-bold ml-1">{formatARS(msg.proposedPrice)}</span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {item.negStatus === "awaiting_buyer" && !item.autoPaid && (
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          onClick={() => handleAcceptDeal(item)}
-                          className="flex-1 h-7 bg-green-500 text-white text-xs font-medium rounded-lg hover:bg-green-600 transition-colors"
-                        >
-                          Aceptar {item.finalPrice != null ? formatARS(item.finalPrice) : ""}
-                        </button>
-                        <button
-                          onClick={() => handleRejectDeal(item)}
-                          className="h-7 px-3 border border-red-300 text-red-500 text-xs font-medium rounded-lg hover:bg-red-50 transition-colors"
-                        >
-                          Rechazar
-                        </button>
-                      </div>
-                    )}
-                    {item.autoPaid && (
-                      <div className="mt-2 flex items-center gap-1.5">
-                        <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Auto-pagado</span>
-                        {item.verificationCode && (
-                          <span className="text-[10px] bg-muted px-2 py-0.5 rounded-full font-mono">{item.verificationCode}</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
+                  {item.title}
+                </p>
+                <div className="flex items-center gap-1.5 px-0.5 mt-0.5">
+                  {item.finalPrice != null ? (
+                    <span className="text-xs text-accent font-bold">
+                      {formatARS(item.finalPrice)}
+                    </span>
+                  ) : item.askPrice != null ? (
+                    <span className="text-xs text-foreground/80 font-medium">
+                      {formatARS(item.askPrice)}
+                    </span>
+                  ) : null}
+                  {item.negId && (
+                    <button
+                      onClick={() => openNegotiation(item.negId!)}
+                      className="text-[10px] text-primary hover:underline"
+                    >
+                      Ver negociación
+                    </button>
+                  )}
                 </div>
               </div>
-            );
-          }
-
-          return (
-            <div
-              key={item.id}
-              className="mb-3 break-inside-avoid cursor-pointer group animate-msg-in transition-transform duration-300 ease-out hover:scale-[1.03] hover:-translate-y-1"
-              style={{ animationDelay: "0s" }}
-            >
-              <div
-                className="rounded-xl overflow-hidden relative"
-                style={{ backgroundColor: item.color, height: item.h }}
-              >
-                {item.imageUrl ? (
-                  <img src={item.imageUrl} alt={item.title} loading="lazy" className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110" />
-                ) : (
-                  <div style={{ height: item.h }} />
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
-                {item.title}
-              </p>
-              {item.askPrice != null && (
-                <p className="text-xs text-foreground/80 font-medium px-0.5 mt-0.5">{formatARS(item.askPrice)}</p>
-              )}
-            </div>
-          );
-        })}
+            ))}
+          </div>
+        ))}
         {searching && tiles.length === 0 && (
-          <div className={searchTiles.length > 0 || searching ? "" : "mb-3 break-inside-avoid"}>
-            <div className="rounded-xl bg-border animate-pulse flex items-center justify-center animate-msg-in" style={{ height: 160 }}>
-              <img src="/logo-icon.svg" alt="" className="h-8 w-8 grayscale opacity-20 animate-thinking" />
+          <div className="animate-msg-in">
+            <div
+              className="rounded-xl bg-border animate-pulse flex items-center justify-center"
+              style={{ height: 280 }}
+            >
+              <img
+                src="/logo-icon.svg"
+                alt=""
+                className="h-8 w-8 grayscale opacity-20 animate-thinking"
+              />
             </div>
           </div>
         )}
       </div>
 
-      {products.length > PRODUCTS_PAGE_SIZE && (
+      {productsLoaded && (hasMoreProducts || products.length > 0) && (
         <div
           ref={loadMoreRef}
           className="px-4 pb-32 pt-2 text-center text-xs text-muted-foreground"
         >
           {hasMoreProducts
-            ? `Mostrando ${visibleProducts.length} de ${products.length}`
+            ? loadingMoreProducts
+              ? "Cargando más publicaciones..."
+              : `Mostrando ${products.length} publicaciones`
             : "No hay más publicaciones"}
         </div>
       )}
@@ -1330,24 +1374,23 @@ export default function ExplorePage() {
                   </p>
                   {(activeNeg.status === "running" ||
                     activeNeg.status === "pending") && (
-                    <span className="flex items-center gap-1 shrink-0">
-                      <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-                      <span className="text-[10px] text-accent font-medium">
-                        En vivo
+                      <span className="flex items-center gap-1 shrink-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+                        <span className="text-[10px] text-accent font-medium">
+                          En vivo
+                        </span>
                       </span>
-                    </span>
-                  )}
+                    )}
                 </div>
                 <div className="max-h-[40vh] overflow-y-auto p-4">
                   <div className="flex items-center gap-2 mb-3">
                     <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        activeNeg.status === "accepted"
-                          ? "bg-accent text-accent-foreground"
-                          : activeNeg.status === "rejected"
-                            ? "bg-destructive text-destructive-foreground"
-                            : "bg-primary text-primary-foreground"
-                      }`}
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${activeNeg.status === "accepted"
+                        ? "bg-accent text-accent-foreground"
+                        : activeNeg.status === "rejected"
+                          ? "bg-destructive text-destructive-foreground"
+                          : "bg-primary text-primary-foreground"
+                        }`}
                     >
                       {activeNeg.status === "accepted"
                         ? "Aceptada"
@@ -1368,11 +1411,10 @@ export default function ExplorePage() {
                         className={`flex ${msg.side === "buyer" ? "justify-end" : "justify-start"}`}
                       >
                         <div
-                          className={`max-w-[80%] px-3 py-1.5 rounded-2xl ${
-                            msg.side === "buyer"
-                              ? "bg-primary/40 text-amber-950 rounded-br-md"
-                              : "bg-black/5 text-foreground rounded-bl-md"
-                          }`}
+                          className={`max-w-[80%] px-3 py-1.5 rounded-2xl ${msg.side === "buyer"
+                            ? "bg-primary/40 text-amber-950 rounded-br-md"
+                            : "bg-black/5 text-foreground rounded-bl-md"
+                            }`}
                         >
                           <div className="flex items-center gap-1.5 mb-0.5">
                             <span className="text-[10px] font-medium opacity-60">
@@ -1627,168 +1669,168 @@ export default function ExplorePage() {
                   </button>
                 </div>
               ) : (
-              <form onSubmit={handleSend} className={chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"}>
-                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
-                <div className={`flex items-center gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}>
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center transition-colors shrink-0"
-                    title="Adjuntar imagen"
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="text-foreground/40"
+                <form onSubmit={handleSend} className={chatOpen || showHistory ? "px-3 py-3" : "px-3 py-2.5"}>
+                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+                  <div className={`flex items-center gap-1.5 ${chatOpen || showHistory ? "border border-black/10 rounded-3xl px-2 py-1.5" : "px-2"}`}>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center transition-colors shrink-0"
+                      title="Adjuntar imagen"
                     >
-                      <line x1="12" y1="5" x2="12" y2="19" />
-                      <line x1="5" y1="12" x2="19" y2="12" />
-                    </svg>
-                  </button>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="text-foreground/40"
+                      >
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                    </button>
 
-                  {isRecording ? (
-                    <>
-                      <div className="flex-1 flex items-center justify-center">
-                        <canvas
-                          ref={canvasRef}
-                          width={300}
-                          height={32}
-                          className="w-full h-8"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={cancelRecording}
-                        className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
-                        title="Cancelar"
-                      >
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="text-foreground/50"
-                        >
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={confirmRecording}
-                        className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
-                        title="Confirmar"
-                      >
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <textarea
-                        ref={textareaRef}
-                        value={transcript || input}
-                        onChange={(e) => {
-                          setInput(e.target.value);
-                          setTranscript("");
-                        }}
-                        onKeyDown={handleKeyDown}
-                        onPaste={handlePaste}
-                        placeholder={
-                          transcript ||
-                          "Decile a tu agente qué querés comprar o vender..."
-                        }
-                        rows={1}
-                        disabled={streaming || !!transcript}
-                        autoFocus
-                        className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground/40 focus:outline-none resize-none disabled:opacity-50"
-                        style={{ height: "32px", maxHeight: "160px", lineHeight: "32px", paddingTop: "0px", paddingBottom: "0px" }}
-                      />
-                      {streaming ? (
+                    {isRecording ? (
+                      <>
+                        <div className="flex-1 flex items-center justify-center">
+                          <canvas
+                            ref={canvasRef}
+                            width={300}
+                            height={32}
+                            className="w-full h-8"
+                          />
+                        </div>
                         <button
                           type="button"
-                          onClick={handleStop}
-                          className="h-8 w-8 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shrink-0 hover:bg-destructive/80 transition-colors"
-                          title="Detener"
+                          onClick={cancelRecording}
+                          className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
+                          title="Cancelar"
                         >
                           <svg
-                            width="12"
-                            height="12"
+                            width="14"
+                            height="14"
                             viewBox="0 0 24 24"
-                            fill="currentColor"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="text-foreground/50"
                           >
-                            <rect x="6" y="6" width="12" height="12" rx="2" />
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
                           </svg>
                         </button>
-                      ) : (
-                        <>
+                        <button
+                          type="button"
+                          onClick={confirmRecording}
+                          className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
+                          title="Confirmar"
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <textarea
+                          ref={textareaRef}
+                          value={transcript || input}
+                          onChange={(e) => {
+                            setInput(e.target.value);
+                            setTranscript("");
+                          }}
+                          onKeyDown={handleKeyDown}
+                          onPaste={handlePaste}
+                          placeholder={
+                            transcript ||
+                            "Decile a tu agente qué querés comprar o vender..."
+                          }
+                          rows={1}
+                          disabled={streaming || !!transcript}
+                          autoFocus
+                          className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground/40 focus:outline-none resize-none disabled:opacity-50"
+                          style={{ height: "32px", maxHeight: "160px", lineHeight: "32px", paddingTop: "0px", paddingBottom: "0px" }}
+                        />
+                        {streaming ? (
                           <button
                             type="button"
-                            onClick={startRecording}
-                            className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
-                            title="Grabar audio"
+                            onClick={handleStop}
+                            className="h-8 w-8 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shrink-0 hover:bg-destructive/80 transition-colors"
+                            title="Detener"
                           >
                             <svg
-                              width="16"
-                              height="16"
+                              width="12"
+                              height="12"
                               viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              className="text-foreground/40"
+                              fill="currentColor"
                             >
-                              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                              <line x1="12" y1="19" x2="12" y2="23" />
-                              <line x1="8" y1="23" x2="16" y2="23" />
+                              <rect x="6" y="6" width="12" height="12" rx="2" />
                             </svg>
                           </button>
-                          <button
-                            type="submit"
-                            className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
-                          >
-                            <svg
-                              width="14"
-                              height="14"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={startRecording}
+                              className="h-8 w-8 rounded-full hover:bg-black/10 flex items-center justify-center shrink-0 transition-colors"
+                              title="Grabar audio"
                             >
-                              <line x1="12" y1="19" x2="12" y2="5" />
-                              <polyline points="5 12 12 5 19 12" />
-                            </svg>
-                          </button>
-                        </>
-                      )}
-                    </>
-                  )}
-                </div>
-              </form>
+                              <svg
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="text-foreground/40"
+                              >
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                <line x1="12" y1="19" x2="12" y2="23" />
+                                <line x1="8" y1="23" x2="16" y2="23" />
+                              </svg>
+                            </button>
+                            <button
+                              type="submit"
+                              className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/80 transition-colors"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <line x1="12" y1="19" x2="12" y2="5" />
+                                <polyline points="5 12 12 5 19 12" />
+                              </svg>
+                            </button>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </form>
               )}
             </>
           )}
@@ -1893,7 +1935,7 @@ export default function ExplorePage() {
                 <p className="text-xs text-muted-foreground mt-0.5">Conecta tu cuenta para operar</p>
               </div>
               <button onClick={() => setShowMpModal(false)} className="text-muted-foreground hover:text-foreground">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
               </button>
             </div>
             <div className="p-6">
@@ -1994,7 +2036,7 @@ export default function ExplorePage() {
                 <p className="text-xs text-muted-foreground mt-0.5">Tu agente paga cuando cierra un trato</p>
               </div>
               <button onClick={() => setShowAutoPayModal(false)} className="text-muted-foreground hover:text-foreground">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
               </button>
             </div>
             <div className="p-6 space-y-5">
@@ -2030,20 +2072,19 @@ export default function ExplorePage() {
                     <button
                       key={cat}
                       onClick={() => toggleCategory(cat)}
-                      className={`px-3 py-1.5 rounded-full text-xs transition-colors border ${
-                        autoPayForm.categories.includes(cat)
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-background text-muted-foreground border-border hover:border-foreground/30"
-                      }`}
+                      className={`px-3 py-1.5 rounded-full text-xs transition-colors border ${autoPayForm.categories.includes(cat)
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background text-muted-foreground border-border hover:border-foreground/30"
+                        }`}
                     >
                       {cat === "electronics" ? "Electronica" :
-                       cat === "vehicles" ? "Vehiculos" :
-                       cat === "apparel" ? "Ropa" :
-                       cat === "furniture" ? "Muebles" :
-                       cat === "home-goods" ? "Hogar" :
-                       cat === "sporting-goods" ? "Deportes" :
-                       cat === "musical-instruments" ? "Instrumentos" :
-                       "Juguetes"}
+                        cat === "vehicles" ? "Vehiculos" :
+                          cat === "apparel" ? "Ropa" :
+                            cat === "furniture" ? "Muebles" :
+                              cat === "home-goods" ? "Hogar" :
+                                cat === "sporting-goods" ? "Deportes" :
+                                  cat === "musical-instruments" ? "Instrumentos" :
+                                    "Juguetes"}
                     </button>
                   ))}
                 </div>
@@ -2057,11 +2098,10 @@ export default function ExplorePage() {
                     <button
                       key={n}
                       onClick={() => setAutoPayForm((p) => ({ ...p, maxPerSearch: n }))}
-                      className={`w-10 h-10 rounded-lg text-sm font-medium transition-colors border ${
-                        autoPayForm.maxPerSearch === n
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-background text-muted-foreground border-border hover:border-foreground/30"
-                      }`}
+                      className={`w-10 h-10 rounded-lg text-sm font-medium transition-colors border ${autoPayForm.maxPerSearch === n
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background text-muted-foreground border-border hover:border-foreground/30"
+                        }`}
                     >
                       {n}
                     </button>

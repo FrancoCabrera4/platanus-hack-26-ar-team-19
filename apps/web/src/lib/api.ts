@@ -303,8 +303,15 @@ export type JobDetail = {
   result: unknown;
 };
 
-export async function listProducts(): Promise<Product[]> {
-  const res = await fetch(`${API_URL}/products?status=active`);
+export async function listProducts(options?: {
+  limit?: number;
+  offset?: number;
+}): Promise<Product[]> {
+  const params = new URLSearchParams({ status: "active" });
+  if (options?.limit != null) params.set("limit", String(options.limit));
+  if (options?.offset != null) params.set("offset", String(options.offset));
+
+  const res = await fetch(`${API_URL}/products?${params.toString()}`);
   if (!res.ok) return [];
   return (await res.json()) as Product[];
 }

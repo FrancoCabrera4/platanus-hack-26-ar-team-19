@@ -13,12 +13,22 @@ productsRouter.get("/", async (req, res) => {
   res.set("Cache-Control", "no-store");
   const status = (req.query.status as string | undefined) ?? "active";
   const category = req.query.category as string | undefined;
+  const rawLimit = Number(req.query.limit);
+  const rawOffset = Number(req.query.offset);
+  const take = Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+    : undefined;
+  const skip = Number.isFinite(rawOffset)
+    ? Math.max(Math.trunc(rawOffset), 0)
+    : undefined;
   const products = await prisma.product.findMany({
     where: {
       status,
       ...(category ? { category } : {}),
     },
     orderBy: { createdAt: "desc" },
+    ...(take ? { take } : {}),
+    ...(skip ? { skip } : {}),
   });
   return res.json(products.map(publicProduct));
 });
