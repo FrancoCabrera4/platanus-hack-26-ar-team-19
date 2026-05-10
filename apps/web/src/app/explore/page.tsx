@@ -67,7 +67,7 @@ const TILE_COLORS = [
   "hsl(220 14% 90%)",
   "hsl(220 14% 92%)",
 ];
-const PRODUCTS_PAGE_SIZE = 10000;
+const PRODUCTS_PAGE_SIZE = 30;
 
 function productsToTiles(products: Product[]): Tile[] {
   return products.map((product, i) => ({
@@ -79,6 +79,25 @@ function productsToTiles(products: Product[]): Tile[] {
     h: TILE_HEIGHTS[i % TILE_HEIGHTS.length]!,
     color: TILE_COLORS[i % TILE_COLORS.length]!,
   }));
+}
+
+function splitTilesIntoColumns<T extends { h: number }>(
+  items: T[],
+  columnCount: number,
+): T[][] {
+  const columns = Array.from({ length: columnCount }, () => [] as T[]);
+  const heights = Array.from({ length: columnCount }, () => 0);
+
+  for (const item of items) {
+    let targetColumn = 0;
+    for (let i = 1; i < heights.length; i++) {
+      if (heights[i]! < heights[targetColumn]!) targetColumn = i;
+    }
+    columns[targetColumn]!.push(item);
+    heights[targetColumn] += item.h;
+  }
+
+  return columns;
 }
 
 function formatARS(n: number): string {
@@ -117,8 +136,9 @@ export default function ExplorePage() {
   const [authLoading, setAuthLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
-  const [visibleProductCount, setVisibleProductCount] =
-    useState(PRODUCTS_PAGE_SIZE);
+  const [hasMoreProducts, setHasMoreProducts] = useState(true);
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
+  const [columnCount, setColumnCount] = useState(2);
   const [searchTiles, setSearchTiles] = useState<Tile[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchStatus, setSearchStatus] = useState("");
@@ -141,6 +161,8 @@ export default function ExplorePage() {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number>(0);
+  const productOffsetRef = useRef(0);
+  const loadingProductsRef = useRef(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [activeNeg, setActiveNeg] = useState<NegotiationDetail | null>(null);
   const [pendingDealNegId, setPendingDealNegId] = useState<string | null>(null);
@@ -151,15 +173,17 @@ export default function ExplorePage() {
     imageUrl?: string;
   } | null>(null);
   const chatOpen = messages.length > 0;
-  const visibleProducts = useMemo(
-    () => products.slice(0, visibleProductCount),
-    [products, visibleProductCount],
-  );
-  const browseTiles =
-    products.length > 0 ? productsToTiles(visibleProducts) : [];
+  const browseTiles = products.length > 0 ? productsToTiles(products) : [];
   const tiles = searchTiles.length > 0 || searching ? searchTiles : browseTiles;
+  const tileColumns = useMemo(
+    () => splitTilesIntoColumns(tiles, columnCount),
+    [tiles, columnCount],
+  );
+  const skeletonColumns = useMemo(
+    () => splitTilesIntoColumns(SKELETON_TILES, columnCount),
+    [columnCount],
+  );
   const isLoadingProducts = !productsLoaded && !authLoading;
-  const hasMoreProducts = visibleProductCount < products.length;
 
   useEffect(() => {
     getMe()
@@ -176,15 +200,53 @@ export default function ExplorePage() {
       .finally(() => setAuthLoading(false));
   }, [router]);
 
-  const refreshProducts = useCallback(() => {
-    listProducts()
-      .then((nextProducts) => {
-        setProducts(nextProducts);
-        setVisibleProductCount(PRODUCTS_PAGE_SIZE);
-      })
-      .catch(() => {})
-      .finally(() => setProductsLoaded(true));
+  useEffect(() => {
+    const updateColumnCount = () => {
+      if (window.matchMedia("(min-width: 1024px)").matches) {
+        setColumnCount(5);
+      } else if (window.matchMedia("(min-width: 768px)").matches) {
+        setColumnCount(4);
+      } else if (window.matchMedia("(min-width: 640px)").matches) {
+        setColumnCount(3);
+      } else {
+        setColumnCount(2);
+      }
+    };
+
+    updateColumnCount();
+    window.addEventListener("resize", updateColumnCount);
+    return () => window.removeEventListener("resize", updateColumnCount);
   }, []);
+
+  const loadProductsPage = useCallback(async (reset = false) => {
+    if (loadingProductsRef.current) return;
+    loadingProductsRef.current = true;
+    if (!reset) setLoadingMoreProducts(true);
+
+    const offset = reset ? 0 : productOffsetRef.current;
+    try {
+      const nextProducts = await listProducts({
+        limit: PRODUCTS_PAGE_SIZE,
+        offset,
+      });
+      productOffsetRef.current = offset + nextProducts.length;
+      setProducts((prev) => (reset ? nextProducts : [...prev, ...nextProducts]));
+      setHasMoreProducts(nextProducts.length === PRODUCTS_PAGE_SIZE);
+    } catch {
+      if (reset) setHasMoreProducts(false);
+    } finally {
+      loadingProductsRef.current = false;
+      setLoadingMoreProducts(false);
+      setProductsLoaded(true);
+    }
+  }, []);
+
+  const refreshProducts = useCallback(() => {
+    setProductsLoaded(false);
+    productOffsetRef.current = 0;
+    setHasMoreProducts(true);
+    void loadProductsPage(true);
+  }, [loadProductsPage]);
 
   useEffect(() => {
     refreshProducts();
@@ -388,21 +450,19 @@ export default function ExplorePage() {
 
   useEffect(() => {
     const marker = loadMoreRef.current;
-    if (!marker || !hasMoreProducts) return;
+    if (!productsLoaded || !marker || !hasMoreProducts) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (!entry?.isIntersecting) return;
-        setVisibleProductCount((count) =>
-          Math.min(count + PRODUCTS_PAGE_SIZE, products.length),
-        );
+        void loadProductsPage();
       },
-      { rootMargin: "200px 0px" },
+      { rootMargin: "900px 0px" },
     );
 
     observer.observe(marker);
     return () => observer.disconnect();
-  }, [hasMoreProducts, products.length]);
+  }, [hasMoreProducts, loadProductsPage, products.length, productsLoaded]);
 
   async function handleLogout() {
     await logout();
@@ -914,15 +974,22 @@ export default function ExplorePage() {
               className="h-12 w-12 animate-pulse"
             />
           </div>
-          <div className="p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28">
-            {SKELETON_TILES.map((s) => (
-              <div key={s.id} className="mb-3 break-inside-avoid">
-                <div
-                  className="rounded-xl bg-muted animate-pulse"
-                  style={{ height: s.h }}
-                />
-                <div className="mt-1.5 h-3 w-3/4 rounded bg-muted animate-pulse" />
-                <div className="mt-1 h-2.5 w-1/2 rounded bg-muted animate-pulse" />
+          <div
+            className="p-4 grid gap-3 pb-28"
+            style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
+          >
+            {skeletonColumns.map((column, columnIndex) => (
+              <div key={columnIndex} className="space-y-3">
+                {column.map((s) => (
+                  <div key={s.id}>
+                    <div
+                      className="rounded-xl bg-muted animate-pulse"
+                      style={{ height: s.h }}
+                    />
+                    <div className="mt-1.5 h-3 w-3/4 rounded bg-muted animate-pulse" />
+                    <div className="mt-1 h-2.5 w-1/2 rounded bg-muted animate-pulse" />
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -930,86 +997,95 @@ export default function ExplorePage() {
       )}
 
       <div
-        className={`p-4 columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""}`}
+        className={`p-4 grid gap-3 pb-28 ${authLoading || isLoadingProducts ? "hidden" : ""}`}
+        style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
       >
-        {tiles.map((item, i) => (
-          <div
-            key={item.id}
-            onClick={() => {
-              if (item.negStatus === "awaiting_buyer" && item.negId) {
-                setDismissedDeals((prev) => {
-                  const next = new Set(prev);
-                  next.delete(item.negId!);
-                  return next;
-                });
-                setPendingDealNegId(item.negId);
-              }
-            }}
-            className="mb-3 break-inside-avoid cursor-pointer group animate-msg-in transition-transform duration-300 ease-out hover:scale-[1.03] hover:-translate-y-1"
-            style={{ animationDelay: searching ? `${i * 0.15}s` : "0s" }}
-          >
-            <div
-              className="rounded-xl overflow-hidden relative"
-              style={{ backgroundColor: item.color, height: item.h }}
-            >
-              {item.imageUrl ? (
-                <img
-                  src={item.imageUrl}
-                  alt={item.title}
-                  loading="lazy"
-                  className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110"
-                />
-              ) : (
-                <div style={{ height: item.h }} />
-              )}
-              {item.negStatus === "accepted" && (
-                <span className="absolute top-2 left-2 bg-accent text-accent-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  Cerrado
-                </span>
-              )}
-              {item.negStatus === "rejected" && (
-                <span className="absolute top-2 left-2 bg-destructive text-destructive-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  Sin acuerdo
-                </span>
-              )}
-              {item.negStatus === "awaiting_buyer" && (
-                <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
-                  Tu confirmación
-                </span>
-              )}
-              {(item.negStatus === "running" ||
-                item.negStatus === "pending") && (
-                <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
-                  Negociando...
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
-              {item.title}
-            </p>
-            <div className="flex items-center gap-1.5 px-0.5 mt-0.5">
-              {item.finalPrice != null ? (
-                <span className="text-xs text-accent font-bold">
-                  {formatARS(item.finalPrice)}
-                </span>
-              ) : item.askPrice != null ? (
-                <span className="text-xs text-foreground/80 font-medium">
-                  {formatARS(item.askPrice)}
-                </span>
-              ) : null}
-              {item.negId && (
-                <button
-                  onClick={() => openNegotiation(item.negId!)}
-                  className="text-[10px] text-primary hover:underline"
+        {tileColumns.map((column, columnIndex) => (
+          <div key={columnIndex} className="space-y-3">
+            {column.map((item, itemIndex) => (
+              <div
+                key={item.id}
+                onClick={() => {
+                  if (item.negStatus === "awaiting_buyer" && item.negId) {
+                    setDismissedDeals((prev) => {
+                      const next = new Set(prev);
+                      next.delete(item.negId!);
+                      return next;
+                    });
+                    setPendingDealNegId(item.negId);
+                  }
+                }}
+                className="cursor-pointer group animate-msg-in transition-transform duration-300 ease-out hover:scale-[1.03] hover:-translate-y-1"
+                style={{
+                  animationDelay: searching
+                    ? `${(columnIndex + itemIndex) * 0.15}s`
+                    : "0s",
+                }}
+              >
+                <div
+                  className="rounded-xl overflow-hidden relative"
+                  style={{ backgroundColor: item.color, height: item.h }}
                 >
-                  Ver negociación
-                </button>
-              )}
-            </div>
+                  {item.imageUrl ? (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.title}
+                      loading="lazy"
+                      className="w-full h-full object-cover block transition-transform duration-500 ease-out group-hover:scale-110"
+                    />
+                  ) : (
+                    <div style={{ height: item.h }} />
+                  )}
+                  {item.negStatus === "accepted" && (
+                    <span className="absolute top-2 left-2 bg-accent text-accent-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      Cerrado
+                    </span>
+                  )}
+                  {item.negStatus === "rejected" && (
+                    <span className="absolute top-2 left-2 bg-destructive text-destructive-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      Sin acuerdo
+                    </span>
+                  )}
+                  {item.negStatus === "awaiting_buyer" && (
+                    <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                      Tu confirmación
+                    </span>
+                  )}
+                  {(item.negStatus === "running" ||
+                    item.negStatus === "pending") && (
+                    <span className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                      Negociando...
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5 px-0.5 group-hover:text-foreground transition-colors line-clamp-2">
+                  {item.title}
+                </p>
+                <div className="flex items-center gap-1.5 px-0.5 mt-0.5">
+                  {item.finalPrice != null ? (
+                    <span className="text-xs text-accent font-bold">
+                      {formatARS(item.finalPrice)}
+                    </span>
+                  ) : item.askPrice != null ? (
+                    <span className="text-xs text-foreground/80 font-medium">
+                      {formatARS(item.askPrice)}
+                    </span>
+                  ) : null}
+                  {item.negId && (
+                    <button
+                      onClick={() => openNegotiation(item.negId!)}
+                      className="text-[10px] text-primary hover:underline"
+                    >
+                      Ver negociación
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         ))}
         {searching && tiles.length === 0 && (
-          <div className="mb-3 break-inside-avoid animate-msg-in">
+          <div className="animate-msg-in">
             <div
               className="rounded-xl bg-border animate-pulse flex items-center justify-center"
               style={{ height: 280 }}
@@ -1026,13 +1102,15 @@ export default function ExplorePage() {
         )}
       </div>
 
-      {products.length > PRODUCTS_PAGE_SIZE && (
+      {productsLoaded && (hasMoreProducts || products.length > 0) && (
         <div
           ref={loadMoreRef}
           className="px-4 pb-32 pt-2 text-center text-xs text-muted-foreground"
         >
           {hasMoreProducts
-            ? `Mostrando ${visibleProducts.length} de ${products.length}`
+            ? loadingMoreProducts
+              ? "Cargando más publicaciones..."
+              : `Mostrando ${products.length} publicaciones`
             : "No hay más publicaciones"}
         </div>
       )}
