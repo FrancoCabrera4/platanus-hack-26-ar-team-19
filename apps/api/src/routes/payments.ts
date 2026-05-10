@@ -218,7 +218,7 @@ paymentsRouter.get("/mp/connect", requireAuth, async (_req, res) => {
 
   const redirectUri = `${apiPublicUrl}/payments/mp/callback`;
   const authUrl =
-    `https://auth.mercadopago.com.ar/authorization` +
+    `https://auth.mercadopago.com.pe/authorization` +
     `?client_id=${mpAppId}` +
     `&response_type=code` +
     `&platform_id=mp` +
@@ -231,7 +231,7 @@ paymentsRouter.get("/mp/connect", requireAuth, async (_req, res) => {
 // GET /payments/mp/callback — MP redirects here after OAuth
 paymentsRouter.get("/mp/callback", async (req, res) => {
   const { code, state: userId } = req.query as { code?: string; state?: string };
-  if (!code || !userId) return res.redirect(`${webOrigin}/explore?mp=error`);
+  if (!code || !userId) return res.redirect(`${webOrigin}/onboarding?mp=error`);
 
   try {
     const tokenRes = await fetch("https://api.mercadopago.com/oauth/token", {
@@ -248,7 +248,7 @@ paymentsRouter.get("/mp/callback", async (req, res) => {
 
     if (!tokenRes.ok) {
       console.error("MP OAuth token exchange failed:", await tokenRes.text());
-      return res.redirect(`${webOrigin}/explore?mp=error`);
+      return res.redirect(`${webOrigin}/onboarding?mp=error`);
     }
 
     const data = (await tokenRes.json()) as {
@@ -269,10 +269,10 @@ paymentsRouter.get("/mp/callback", async (req, res) => {
       },
     });
 
-    return res.redirect(`${webOrigin}/explore?mp=ok`);
+    return res.redirect(`${webOrigin}/onboarding?mp=ok`);
   } catch (err) {
     console.error("MP OAuth error:", err);
-    return res.redirect(`${webOrigin}/explore?mp=error`);
+    return res.redirect(`${webOrigin}/onboarding?mp=error`);
   }
 });
 

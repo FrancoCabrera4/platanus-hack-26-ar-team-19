@@ -42,9 +42,9 @@ export default function LoginPage() {
             className="text-4xl leading-tight mb-6"
             style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}
           >
-            Tu agente negocia,
+            El marketplace que compra por ti,
             <br />
-            vos cerrás el trato.
+            negocia por ti, y paga por ti.
           </p>
           <p className="text-background/60 max-w-md">
             Decile qué querés vender o comprar. La IA se encarga de encontrar el mejor precio.
