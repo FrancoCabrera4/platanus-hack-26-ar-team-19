@@ -22,13 +22,18 @@ export interface MLPriceRef {
 const ML_API = "https://api.mercadolibre.com";
 const SITE = "MLA"; // Argentina
 
+function authHeaders(): Record<string, string> {
+  const token = process.env.MERCADOLIBRE_ACCESS_TOKEN;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export async function searchMercadoLibre(
   query: string,
   limit = 10,
 ): Promise<MLProduct[]> {
   try {
     const url = `${ML_API}/sites/${SITE}/search?q=${encodeURIComponent(query)}&limit=${limit}&sort=relevance`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: authHeaders() });
     if (!res.ok) {
       log("MercadoLibre API error:", res.status);
       return [];
