@@ -21,9 +21,11 @@ type ScrapedProduct = {
   title: string;
   priceRaw: string;
   price: number | null;
+  priceARS?: number;
   currency: string | null;
   location: string | null;
   imageUrl: string | null;
+  visionAnalysis?: string | null;
   scrapedAt: string;
 };
 
@@ -42,11 +44,17 @@ type ProductSeedRow = {
   askPrice: number;
   negotiationStrategy: string;
   imageUrl: string | null;
+  visionAnalysis: string | null;
 };
 
 const DATA_DIR = path.resolve(__dirname, "..", "..", "data");
 const FB_SELLER_DOMAIN = "fb-seller.demo";
 const SELLER_POOL_SIZE = 12;
+const MIN_PRICE_ARS = Number(process.env.FB_MIN_PRICE_ARS ?? 200);
+const MAX_PRICE_ARS = Number(process.env.FB_MAX_PRICE_ARS ?? 50_000_000);
+const OUTLIER_Z_SCORE = Number(process.env.FB_OUTLIER_Z_SCORE ?? 3.5);
+const OUTLIER_STDDEV_FACTOR = Number(process.env.FB_OUTLIER_STDDEV_FACTOR ?? 3);
+const OUTLIER_MIN_SAMPLE = Number(process.env.FB_OUTLIER_MIN_SAMPLE ?? 8);
 const MOCK_SELLER_ZONES = [
   "Palermo, CABA",
   "Caballito, CABA",
@@ -108,13 +116,15 @@ function titleKey(title: string) {
 const USD_TO_ARS = Number(process.env.USD_TO_ARS ?? 1200);
 const USD_THRESHOLD = 5000;
 
-function toARS(price: number): number {
+function toARS(price: number, currency: string | null): number {
+  if (/^(?:US\$|USD)$/i.test(currency ?? "")) return Math.round(price * USD_TO_ARS);
+  if (currency) return Math.round(price);
   if (price < USD_THRESHOLD) return Math.round(price * USD_TO_ARS);
   return price;
 }
 
 function deriveProductFields(item: ScrapedProduct) {
-  const askPrice = toARS(item.price ?? 0);
+  const askPrice = item.priceARS ?? toARS(item.price ?? 0, item.currency);
 
   // Recover from the title/location swap in the raw scrape.
   let title = item.title;
@@ -132,6 +142,66 @@ function deriveProductFields(item: ScrapedProduct) {
     description,
     title,
     negotiationStrategy: "Publicación importada de Facebook Marketplace; negociar de forma razonable alrededor del precio publicado.",
+  };
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)]!;
+}
+
+function average(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function standardDeviation(values: number[], avg = average(values)): number {
+  const variance = average(values.map((value) => (value - avg) ** 2));
+  return Math.sqrt(variance);
+}
+
+function findPriceOutliers<T extends { askPrice: number }>(
+  products: T[],
+): { stats: { count: number; average: number; median: number; stdDev: number; lowerCutoff: number; upperCutoff: number }; outliers: T[] } | null {
+  const prices = products.map((product) => product.askPrice).filter((price) => Number.isFinite(price) && price > 0);
+  if (prices.length < OUTLIER_MIN_SAMPLE) return null;
+
+  const priceAverage = average(prices);
+  const priceMedian = median(prices);
+  const priceStdDev = standardDeviation(prices, priceAverage);
+  const logPrices = prices.map((price) => Math.log(price));
+  const logMedian = median(logPrices);
+  const logMad = median(logPrices.map((price) => Math.abs(price - logMedian)));
+
+  let lowerCutoff: number;
+  let upperCutoff: number;
+  let outliers: T[];
+  if (logMad > 0) {
+    lowerCutoff = Math.exp(logMedian - (OUTLIER_Z_SCORE * logMad) / 0.6745);
+    upperCutoff = Math.exp(logMedian + (OUTLIER_Z_SCORE * logMad) / 0.6745);
+    outliers = products.filter((product) => {
+      const modifiedZScore = (0.6745 * Math.abs(Math.log(product.askPrice) - logMedian)) / logMad;
+      return modifiedZScore > OUTLIER_Z_SCORE;
+    });
+  } else if (priceStdDev > 0) {
+    lowerCutoff = Math.max(0, priceAverage - OUTLIER_STDDEV_FACTOR * priceStdDev);
+    upperCutoff = priceAverage + OUTLIER_STDDEV_FACTOR * priceStdDev;
+    outliers = products.filter((product) => product.askPrice < lowerCutoff || product.askPrice > upperCutoff);
+  } else {
+    lowerCutoff = priceMedian;
+    upperCutoff = priceMedian;
+    outliers = [];
+  }
+
+  return {
+    stats: {
+      count: prices.length,
+      average: Math.round(priceAverage),
+      median: Math.round(priceMedian),
+      stdDev: Math.round(priceStdDev),
+      lowerCutoff: Math.round(lowerCutoff),
+      upperCutoff: Math.round(upperCutoff),
+    },
+    outliers,
   };
 }
 
@@ -162,8 +232,14 @@ async function main() {
   const seenTitles = new Set<string>();
   const rows: ProductSeedRow[] = [];
   let duplicateTitles = 0;
+  let priceRangeRejected = 0;
   for (const item of valid) {
     const { askPrice, description, title, negotiationStrategy } = deriveProductFields(item);
+    if (!Number.isFinite(askPrice) || askPrice < MIN_PRICE_ARS || askPrice > MAX_PRICE_ARS) {
+      priceRangeRejected += 1;
+      continue;
+    }
+
     const trimmedTitle = title.slice(0, 200).trim();
     const key = titleKey(trimmedTitle);
     if (!trimmedTitle || seenTitles.has(key)) {
@@ -182,10 +258,16 @@ async function main() {
       askPrice,
       negotiationStrategy,
       imageUrl: item.imageUrl,
+      visionAnalysis: item.visionAnalysis ?? null,
     });
   }
   if (duplicateTitles > 0) {
     console.log(`[seed:fb] omitidos ${duplicateTitles} products con título duplicado`);
+  }
+  if (priceRangeRejected > 0) {
+    console.log(
+      `[seed:fb] omitidos ${priceRangeRejected} products fuera de rango (${MIN_PRICE_ARS}-${MAX_PRICE_ARS} ARS)`,
+    );
   }
 
   if (rows.length === 0) {
@@ -193,11 +275,14 @@ async function main() {
     return;
   }
 
-  let count = 0;
+  const insertedIds: string[] = [];
+  const visionByProductId = new Map<string, string | null>();
   for (const row of rows) {
     let product;
     try {
-      product = await prisma.product.create({ data: row });
+      const { visionAnalysis, ...productData } = row;
+      product = await prisma.product.create({ data: productData });
+      visionByProductId.set(product.id, visionAnalysis);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
         console.warn(`[seed:fb] omitido título ya existente: ${row.title}`);
@@ -205,13 +290,47 @@ async function main() {
       }
       throw err;
     }
-    await upsertProductEmbedding(product.id, product);
-    count += 1;
+    insertedIds.push(product.id);
   }
 
-  console.log(`[seed:fb] insertados ${count} products`);
+  const importedProducts = await prisma.product.findMany({
+    where: { id: { in: insertedIds } },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      category: true,
+      condition: true,
+      askPrice: true,
+    },
+  });
+  const outlierAnalysis = findPriceOutliers(importedProducts);
+  const outlierIds = outlierAnalysis?.outliers.map((product) => product.id) ?? [];
+  if (outlierAnalysis) {
+    console.log("[seed:fb] agregados precio:", outlierAnalysis.stats);
+  } else {
+    console.log(`[seed:fb] skip outlier cleanup: menos de ${OUTLIER_MIN_SAMPLE} products importados`);
+  }
+
+  if (outlierIds.length > 0) {
+    await prisma.product.deleteMany({ where: { id: { in: outlierIds } } });
+    console.log(`[seed:fb] borrados ${outlierIds.length} products outliers por precio`);
+  }
+
+  const productsForEmbeddings = importedProducts.filter((product) => !outlierIds.includes(product.id));
+  for (const product of productsForEmbeddings) {
+    await upsertProductEmbedding(product.id, {
+      ...product,
+      visionAnalysis: visionByProductId.get(product.id) ?? null,
+    });
+  }
+
+  console.log(`[seed:fb] insertados ${productsForEmbeddings.length} products`);
   const byCat: Record<string, number> = {};
-  for (const r of rows) byCat[r.category!] = (byCat[r.category!] ?? 0) + 1;
+  for (const product of productsForEmbeddings) {
+    if (!product.category) continue;
+    byCat[product.category] = (byCat[product.category] ?? 0) + 1;
+  }
   console.log("[seed:fb] por categoría:", byCat);
 }
 

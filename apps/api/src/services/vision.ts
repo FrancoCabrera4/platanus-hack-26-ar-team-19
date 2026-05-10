@@ -6,6 +6,8 @@ import path from "path";
 
 const openAiApiKey = process.env.OPENAI_API_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
+const openAiVisionModel = process.env.OPENAI_VISION_MODEL ?? "gpt-4o-mini";
+const IMAGE_FETCH_TIMEOUT_MS = Number(process.env.VISION_IMAGE_FETCH_TIMEOUT_MS ?? 15_000);
 
 const openAiClient = new OpenAI({ apiKey: openAiApiKey ?? "missing" });
 const geminiClient = new GoogleGenerativeAI(geminiApiKey ?? "missing");
@@ -23,6 +25,10 @@ Respond in Spanish if the image has Spanish text, otherwise English.`;
 const SEARCH_PROMPT = `Describe this image as if you were searching for this product on a marketplace.
 Include: what it is, type/brand/model if identifiable, color, size, condition, category.
 Be concise. This will be used to find similar products.`;
+
+const MARKETPLACE_IMAGE_PROMPT = `Create a concise marketplace product image description for semantic search.
+Mention the visible product type, brand/model if readable, color, condition, accessories, and category.
+Do not invent details that are not visible. Keep it under 70 words.`;
 
 const VERIFY_PROMPT = `You are verifying if a product image matches what a buyer is looking for.
 
@@ -45,23 +51,42 @@ function resolveImagePath(imageUrl: string): string {
   return imageUrl;
 }
 
-function buildOpenAiImageContent(imageUrl: string): OpenAI.ChatCompletionContentPartImage {
+async function fetchImageAsDataUrl(imageUrl: string): Promise<string> {
+  const res = await fetch(imageUrl, {
+    signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
+    headers: {
+      Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      Referer: "https://www.facebook.com/",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`image fetch failed: ${res.status} ${res.statusText}`);
+  }
+
+  const contentType = res.headers.get("content-type") ?? "image/jpeg";
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return `data:${contentType};base64,${buffer.toString("base64")}`;
+}
+
+async function buildOpenAiImageContent(imageUrl: string): Promise<OpenAI.ChatCompletionContentPartImage> {
   if (imageUrl.startsWith("data:")) {
-    return { type: "image_url", image_url: { url: imageUrl } };
+    return { type: "image_url", image_url: { url: imageUrl, detail: "low" } };
   }
   if (imageUrl.startsWith("/") || imageUrl.startsWith("./")) {
     const buffer = readFileSync(imageUrl);
     const base64 = buffer.toString("base64");
     const mime = imageUrl.endsWith(".png") ? "image/png" : "image/jpeg";
-    return { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } };
+    return { type: "image_url", image_url: { url: `data:${mime};base64,${base64}`, detail: "low" } };
   }
-  return { type: "image_url", image_url: { url: imageUrl } };
+  return { type: "image_url", image_url: { url: await fetchImageAsDataUrl(imageUrl), detail: "low" } };
 }
 
-async function analyzeWithOpenAi(imageUrl: string, prompt: string): Promise<string> {
-  const imageContent = buildOpenAiImageContent(imageUrl);
+async function analyzeWithOpenAi(imageUrl: string, prompt: string, maxTokens = 500): Promise<string> {
+  const imageContent = await buildOpenAiImageContent(imageUrl);
   const response = await openAiClient.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: openAiVisionModel,
     messages: [
       {
         role: "user",
@@ -71,7 +96,7 @@ async function analyzeWithOpenAi(imageUrl: string, prompt: string): Promise<stri
         ],
       },
     ],
-    max_tokens: 500,
+    max_tokens: maxTokens,
   });
   return response.choices[0]?.message?.content ?? "";
 }
@@ -100,10 +125,10 @@ async function analyzeWithGemini(imageUrl: string, prompt: string): Promise<stri
   return result.response.text();
 }
 
-async function analyzeImage(imageUrl: string, prompt: string): Promise<string> {
+async function analyzeImage(imageUrl: string, prompt: string, maxTokens = 500): Promise<string> {
   const resolved = resolveImagePath(imageUrl);
   if (openAiApiKey) {
-    return analyzeWithOpenAi(resolved, prompt);
+    return analyzeWithOpenAi(resolved, prompt, maxTokens);
   }
   if (geminiApiKey) {
     return analyzeWithGemini(resolved, prompt);
@@ -116,6 +141,10 @@ async function analyzeImage(imageUrl: string, prompt: string): Promise<string> {
 
 export async function analyzeProductImage(imageUrl: string): Promise<string> {
   return analyzeImage(imageUrl, ANALYSIS_PROMPT);
+}
+
+export async function describeMarketplaceProductImage(imageUrl: string): Promise<string> {
+  return analyzeImage(imageUrl, MARKETPLACE_IMAGE_PROMPT, 160);
 }
 
 export async function analyzeSearchImage(imageUrl: string): Promise<string> {

@@ -10,9 +10,14 @@
  * Env:
  *   FB_LOCATION       e.g. "buenosaires" (default)
  *   FB_CATEGORIES     comma-separated slugs; defaults to a sensible set
- *   FB_MAX_PER_CAT    max listings per category (default 150)
+ *   FB_MAX_PER_CAT    max kept listings per category (default 300)
  *   FB_SCROLL_ROUNDS  max scroll attempts per category (default scales with target)
  *   FB_QUERY_TERMS    comma-separated search terms appended to every category
+ *   FB_OVERSAMPLE_FACTOR raw listings to collect per kept listing target (default 4)
+ *   FB_MIN_PRICE_ARS  min accepted listing price after ARS normalization (default 200)
+ *   FB_MAX_PRICE_ARS  max accepted listing price after ARS normalization (default 50_000_000)
+ *   USD_TO_ARS        USD conversion rate for listings marked as USD (default 1200)
+ *   FB_ANALYZE_IMAGES "0" to skip LLM image descriptions (default enabled)
  *   FB_HEADED         "1" to run with a visible browser (default headless)
  *
  * No login required: Marketplace renders public listings before the login
@@ -23,6 +28,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Page } from "playwright";
+import { describeMarketplaceProductImage } from "../services/vision";
 
 type RawListing = { url: string; text: string; img: string | null };
 
@@ -32,15 +38,25 @@ type ScrapedProduct = {
   title: string;
   priceRaw: string;
   price: number | null;
+  priceARS?: number;
   currency: string | null;
   location: string | null;
   imageUrl: string | null;
+  visionAnalysis?: string | null;
   scrapedAt: string;
 };
 
 const LOCATION = process.env.FB_LOCATION ?? "buenosaires";
-const MAX_PER_CAT = Number(process.env.FB_MAX_PER_CAT ?? 150);
-const MAX_SCROLL_ROUNDS = Number(process.env.FB_SCROLL_ROUNDS ?? Math.max(18, Math.ceil(MAX_PER_CAT / 5)));
+const MAX_PER_CAT = Number(process.env.FB_MAX_PER_CAT ?? 300);
+const OVERSAMPLE_FACTOR = Number(process.env.FB_OVERSAMPLE_FACTOR ?? 4);
+const MAX_SCROLL_ROUNDS = Number(
+  process.env.FB_SCROLL_ROUNDS ?? Math.max(18, Math.ceil((MAX_PER_CAT * OVERSAMPLE_FACTOR) / 5)),
+);
+const MIN_PRICE_ARS = Number(process.env.FB_MIN_PRICE_ARS ?? 200);
+const MAX_PRICE_ARS = Number(process.env.FB_MAX_PRICE_ARS ?? 50_000_000);
+const USD_TO_ARS = Number(process.env.USD_TO_ARS ?? 1200);
+const USD_THRESHOLD = 5000;
+const ANALYZE_IMAGES = process.env.FB_ANALYZE_IMAGES !== "0";
 const DEFAULT_CATEGORIES = [
   "vehicles",
   "electronics",
@@ -51,13 +67,70 @@ const DEFAULT_CATEGORIES = [
   "toys-games",
 ];
 const CATEGORY_QUERY_TERMS: Record<string, string[]> = {
-  vehicles: ["auto", "moto", "camioneta", "bicicleta", "scooter", "casco", "repuestos"],
-  electronics: ["iphone", "samsung", "notebook", "monitor", "playstation", "auriculares", "tablet"],
-  apparel: ["zapatillas", "campera", "vestido", "remera", "jean", "bolso", "ropa"],
-  "home-goods": ["sillon", "mesa", "silla", "cama", "heladera", "mueble", "decoracion"],
-  "musical-instruments": ["guitarra", "bajo", "teclado", "bateria", "amplificador", "microfono", "pedal"],
-  "sporting-goods": ["pesas", "bicicleta", "botines", "raqueta", "pelota", "fitness", "camping"],
-  "toys-games": ["juguetes", "lego", "muñeca", "playmobil", "juego de mesa", "cartas", "consola"],
+  vehicles: [
+    "auto",
+    "moto",
+    "camioneta",
+    "bicicleta",
+    "scooter",
+    "casco",
+    "repuestos",
+  ],
+  electronics: [
+    "iphone",
+    "macbook",
+    "samsung",
+    "notebook",
+    "monitor",
+    "playstation",
+    "auriculares",
+    "tablet",
+  ],
+  apparel: [
+    "zapatillas",
+    "campera",
+    "vestido",
+    "remera",
+    "jean",
+    "bolso",
+    "ropa",
+  ],
+  "home-goods": [
+    "sillon",
+    "mesa",
+    "silla",
+    "cama",
+    "heladera",
+    "mueble",
+    "decoracion",
+  ],
+  "musical-instruments": [
+    "guitarra",
+    "bajo",
+    "teclado",
+    "bateria",
+    "amplificador",
+    "microfono",
+    "pedal",
+  ],
+  "sporting-goods": [
+    "pesas",
+    "bicicleta",
+    "botines",
+    "raqueta",
+    "pelota",
+    "fitness",
+    "camping",
+  ],
+  "toys-games": [
+    "juguetes",
+    "lego",
+    "muñeca",
+    "playmobil",
+    "juego de mesa",
+    "cartas",
+    "consola",
+  ],
 };
 const CATEGORIES = (process.env.FB_CATEGORIES ?? DEFAULT_CATEGORIES.join(","))
   .split(",")
@@ -71,6 +144,11 @@ const EXTRA_QUERY_TERMS = (process.env.FB_QUERY_TERMS ?? "")
 const ROOT = path.resolve(__dirname, "..", "..");
 const DATA_DIR = path.join(ROOT, "data");
 
+type RejectionReason = "invalid_price" | "too_low" | "too_high";
+type RejectionStats = Record<RejectionReason, number>;
+
+const PRICE_LIKE = /^\s*(?:US\$|U\$S|USD|ARS|\$)?\s*[\d.,]+\s*$/i;
+
 function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
@@ -79,7 +157,7 @@ function parsePrice(raw: string): { price: number | null; currency: string | nul
   if (!raw) return { price: null, currency: null };
   const lower = raw.toLowerCase();
   if (lower.includes("gratis") || lower.includes("free")) return { price: 0, currency: null };
-  const currencyMatch = raw.match(/(US\$|U\$S|USD|ARS|\$)/i);
+  const currencyMatch = raw.match(/(?:US\$|U\$S|USD|ARS|\$)/i);
   const currency = currencyMatch ? currencyMatch[0].toUpperCase().replace("U$S", "USD") : null;
   const digits = raw.replace(/[^\d.,]/g, "");
   if (!digits) return { price: null, currency };
@@ -89,6 +167,13 @@ function parsePrice(raw: string): { price: number | null; currency: string | nul
     : digits.replace(/\./g, "");
   const n = Number(normalised);
   return { price: Number.isFinite(n) ? n : null, currency };
+}
+
+function toARS(price: number, currency: string | null): number {
+  if (/^(?:US\$|USD)$/i.test(currency ?? "")) return Math.round(price * USD_TO_ARS);
+  if (currency) return Math.round(price);
+  if (price < USD_THRESHOLD) return Math.round(price * USD_TO_ARS);
+  return Math.round(price);
 }
 
 async function dismissLoginDialog(page: Page) {
@@ -164,12 +249,17 @@ function categoryUrls(category: string): string[] {
 function parseListing(category: string, item: RawListing, scrapedAt: string): ScrapedProduct | null {
   const lines = item.text.split("\n").map((s) => s.trim()).filter(Boolean);
   if (lines.length === 0) return null;
-  const priceLine = lines.find((l) => /\d/.test(l) && /(\$|usd|ars|gratis|free)/i.test(l)) ?? lines[0]!;
+  const priceLine = lines.find((l) => /\d/.test(l) && /(?:\$|usd|ars|gratis|free)/i.test(l)) ?? lines[0]!;
   const priceIdx = lines.indexOf(priceLine);
-  const title = lines[priceIdx + 1] ?? lines.find((l, i) => i !== priceIdx) ?? "";
-  const location = lines[priceIdx + 2] ?? null;
+  let title = lines[priceIdx + 1] ?? lines.find((l, i) => i !== priceIdx) ?? "";
+  let location: string | null = lines[priceIdx + 2] ?? null;
   const { price, currency } = parsePrice(priceLine);
   if (!title || price === null) return null;
+
+  if (PRICE_LIKE.test(title) && location && !PRICE_LIKE.test(location)) {
+    title = location;
+    location = null;
+  }
 
   return {
     category,
@@ -184,11 +274,59 @@ function parseListing(category: string, item: RawListing, scrapedAt: string): Sc
   };
 }
 
+function reject(stats: RejectionStats, reason: RejectionReason) {
+  stats[reason] += 1;
+}
+
+function validateListingPrice(
+  listing: ScrapedProduct,
+  stats: RejectionStats,
+): ScrapedProduct | null {
+  if (listing.price === null || listing.price <= 0) {
+    reject(stats, "invalid_price");
+    return null;
+  }
+
+  const priceARS = toARS(listing.price, listing.currency);
+  if (!Number.isFinite(priceARS) || priceARS <= 0) {
+    reject(stats, "invalid_price");
+    return null;
+  }
+
+  if (priceARS < MIN_PRICE_ARS) {
+    reject(stats, "too_low");
+    return null;
+  }
+  if (priceARS > MAX_PRICE_ARS) {
+    reject(stats, "too_high");
+    return null;
+  }
+
+  return { ...listing, priceARS };
+}
+
+async function addVisionAnalysis(listing: ScrapedProduct): Promise<ScrapedProduct> {
+  if (!ANALYZE_IMAGES || !listing.imageUrl) return { ...listing, visionAnalysis: null };
+
+  try {
+    const analysis = await describeMarketplaceProductImage(listing.imageUrl);
+    return { ...listing, visionAnalysis: analysis.trim() || null };
+  } catch (err) {
+    console.warn(`[scrape] no se pudo analizar imagen "${listing.title}":`, (err as Error).message);
+    return { ...listing, visionAnalysis: null };
+  }
+}
+
 async function scrapeCategory(page: Page, category: string): Promise<ScrapedProduct[]> {
   const scrapedAt = new Date().toISOString();
   const listings: ScrapedProduct[] = [];
   const seenUrls = new Set<string>();
   const seenTitles = new Set<string>();
+  const rejections: RejectionStats = {
+    invalid_price: 0,
+    too_low: 0,
+    too_high: 0,
+  };
 
   for (const url of categoryUrls(category)) {
     console.log(`[scrape] ${category} → ${url}`);
@@ -196,27 +334,37 @@ async function scrapeCategory(page: Page, category: string): Promise<ScrapedProd
     await page.waitForTimeout(3500);
     await dismissLoginDialog(page);
 
-    const raw = await collectListingAnchors(page, MAX_PER_CAT * 2);
+    const raw = await collectListingAnchors(page, MAX_PER_CAT * OVERSAMPLE_FACTOR);
     let addedFromSource = 0;
     for (const item of raw) {
       if (seenUrls.has(item.url)) continue;
+      seenUrls.add(item.url);
+
       const listing = parseListing(category, item, scrapedAt);
-      if (!listing) continue;
+      if (!listing) {
+        reject(rejections, "invalid_price");
+        continue;
+      }
       const key = titleKey(listing.title);
       if (seenTitles.has(key)) continue;
 
-      seenUrls.add(item.url);
+      const validated = validateListingPrice(listing, rejections);
+      if (!validated) continue;
+      const enriched = await addVisionAnalysis(validated);
+
       seenTitles.add(key);
-      listings.push(listing);
+      listings.push(enriched);
       addedFromSource += 1;
       if (listings.length >= MAX_PER_CAT) break;
     }
 
-    console.log(`[scrape] ${category}: +${addedFromSource} from source (${listings.length}/${MAX_PER_CAT})`);
+    console.log(
+      `[scrape] ${category}: +${addedFromSource} from source (${listings.length}/${MAX_PER_CAT}) rejections=${JSON.stringify(rejections)}`,
+    );
     if (listings.length >= MAX_PER_CAT) break;
   }
 
-  console.log(`[scrape] ${category}: ${listings.length} listings`);
+  console.log(`[scrape] ${category}: ${listings.length} listings, rejections=${JSON.stringify(rejections)}`);
   return listings;
 }
 
