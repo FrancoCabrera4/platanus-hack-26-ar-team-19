@@ -27,7 +27,7 @@ negotiationsRouter.get("/", async (_req, res) => {
   const negotiations = await prisma.negotiation.findMany({
     where: {
       OR: [{ buyerId: user.id }, { sellerId: user.id }],
-      status: { in: ["awaiting_buyer", "accepted"] },
+      status: "accepted",
     },
     include: {
       buyer: { select: { id: true, name: true, email: true } },
