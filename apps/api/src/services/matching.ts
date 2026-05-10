@@ -247,18 +247,6 @@ export async function findMatches(
     candidates = mergeCandidates(fallbackOrig, fallbackExp);
   }
 
-  // Fraud filter — remove suspicious products before scoring
-  const categoryAverages = await getCategoryAverages();
-  const { passed, blocked } = checkCandidates(candidates, categoryAverages);
-  if (blocked.length > 0) {
-    log(`[matching] Fraud filter blocked ${blocked.length} candidates`);
-  }
-  candidates = passed;
-
-  log(
-    `[matching] ${candidates.length} candidates after retrieval + fraud filter`,
-  );
-
   if (candidates.length === 0) return [];
   if (candidates.length === 1) {
     const only = candidates[0]!;
@@ -272,130 +260,11 @@ export async function findMatches(
     ];
   }
 
-  // Step 4: LLM re-rank with full buyer context
-  const scoringInput: ScoringInput = {
-    query: search.query,
-    expandedQuery: expanded,
-    requirements: search.requirements,
-    category: effectiveCategory,
-    maxPrice: search.maxPrice,
-    negotiationStrategy: search.negotiationStrategy,
-    imageDescription,
-    candidates: candidates.map((c) => ({
-      id: c.id,
-      title: c.title,
-      description: c.description,
-      category: c.category,
-      askPrice: c.askPrice,
-      vectorSimilarity: Math.round(c.similarity * 1000) / 1000,
-    })),
-  };
-
-  let scored: { matches: MatchCandidate[] };
-  try {
-    scored = await generateJSON<{ matches: MatchCandidate[] }>({
-      system: `You are an expert product matching engine for an Argentine marketplace (prices in ARS).
-
-Score how well each candidate product matches the buyer's search. Consider ALL of these factors:
-
-1. **Semantic relevance** (most important): Is this genuinely what the buyer wants? A "campera North Face" search should NOT match random jackets from other brands.
-2. **Brand matching**: If buyer specified a brand, matching brand gets a big boost. Wrong brand = low score.
-3. **Price reasonableness**: Products near the buyer's maxPrice are ideal. Products much cheaper might be suspicious (bad condition?). Products slightly above budget can still score if they're a great match.
-4. **Category fit**: Does the product belong in the right category?
-5. **Condition/requirements**: Does it meet the buyer's stated requirements?
-6. **Vector similarity hint**: Use the vectorSimilarity as a starting point but override it with your judgment.
-
-Scoring guide:
-- 0.9-1.0: Perfect match — exactly what buyer wants, right brand, right price range
-- 0.7-0.89: Strong match — same product type, minor differences
-- 0.5-0.69: Decent match — related product, could work
-- 0.3-0.49: Weak match — tangentially related
-- 0.0-0.29: Poor match — wrong product entirely
-
-Be STRICT. Most products should score below 0.5. Only genuine matches deserve high scores.
-Return ALL candidates scored, sorted by score descending.`,
-      history: [
-        {
-          role: "user",
-          content: `Buyer search:\n${JSON.stringify(scoringInput, null, 2)}\n\nScore each candidate.`,
-        },
-      ],
-      jsonSchema: SCORING_SCHEMA,
-      temperature: 0.2,
-    });
-  } catch (err) {
-    log(
-      "Match scoring failed, falling back to vector similarity:",
-      (err as Error).message,
-    );
-    scored = {
-      matches: candidates.map((c) => ({
-        productId: c.id,
-        score: priceAdjustedScore(c.similarity, c.askPrice, search.maxPrice),
-        rationale: "Fallback: vector similarity + price adjustment.",
-      })),
-    };
-  }
-
-  const validIds = new Set(candidates.map((c) => c.id));
-  const minScore = minLlmMatchScore();
-  let textRanked = scored.matches
-    .filter((m) => validIds.has(m.productId))
-    .filter((m) => m.score >= minScore)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, Math.max(topN * 2, 8));
-
-  if (textRanked.length === 0) {
-    log(
-      "Match scoring returned no usable candidates; falling back to retrieval scores.",
-    );
-    return candidatesToMatches(candidates, search.maxPrice).slice(0, topN);
-  }
-
-  // Step 5: Vision re-rank — parallel image verification
-  const candidateMap = new Map(candidates.map((c) => [c.id, c]));
-  const buyerDescription = [search.query, search.requirements, imageDescription]
-    .filter(Boolean)
-    .join(". ");
-
-  textRanked = await visionRerank(textRanked, candidateMap, buyerDescription);
-
-  const qualityFiltered = textRanked.filter((m) => m.score >= minScore);
-
-  log(
-    `[matching] Final ranking: ${textRanked
-      .slice(0, topN)
-      .map((m) => `${m.productId.slice(0, 8)}=${m.score.toFixed(2)}`)
-      .join(", ")}`,
-  );
-
-  // Step 6: Market price verification — flag suspiciously cheap products
-  const verified: MatchCandidate[] = [];
-  for (const match of qualityFiltered.slice(0, topN)) {
-    const candidate = candidateMap.get(match.productId);
-    if (!candidate) {
-      verified.push(match);
-      continue;
-    }
-
-    const marketCheck = await verifyPriceWithMarket(
-      candidate.title,
-      candidate.askPrice,
-    );
-    if (marketCheck?.suspicious) {
-      log(
-        `[matching] Market price fraud: "${candidate.title}" — ${marketCheck.reason}`,
-      );
-      continue;
-    }
-    verified.push(match);
-  }
-
-  log(
-    `[matching] Final: ${textRanked.length} scored, ${qualityFiltered.length} quality, ${verified.length} verified`,
-  );
-
-  return verified;
+  return candidates.map((c) => ({
+    productId: c.id,
+    score: c.similarity,
+    rationale: "Fallback: vector similarity + price adjustment.",
+  }));
 }
 
 // --- Price-aware scoring ---
