@@ -9,6 +9,7 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
+  mpConnected?: boolean;
 };
 
 function hashToken(token: string): string {
@@ -28,6 +29,7 @@ export function publicUser(user: AuthUser) {
     id: user.id,
     name: user.name,
     email: user.email,
+    mpConnected: user.mpConnected ?? false,
   };
 }
 

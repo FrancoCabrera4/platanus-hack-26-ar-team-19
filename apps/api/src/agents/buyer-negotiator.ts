@@ -1,5 +1,6 @@
 import { generateJSON, type ChatTurn } from "../llm/gemini";
 import type { NegotiatorMove } from "./seller-negotiator";
+import type { MatchQuality } from "../services/matching";
 
 export interface BuyerNegotiatorContext {
   product: {
@@ -17,6 +18,7 @@ export interface BuyerNegotiatorContext {
   };
   transcript: { side: "seller" | "buyer"; price: number | null; message: string }[];
   turnsRemaining: number;
+  matchQuality?: MatchQuality;
 }
 
 const SCHEMA = {
@@ -29,32 +31,39 @@ const SCHEMA = {
   required: ["action", "message"],
 } as const;
 
-const SYSTEM = `You are the BUYER agent in a marketplace negotiation. Your job is to minimize the final price
-without losing a good deal.
+const SYSTEM = `Sos un comprador en un marketplace argentino. Hablás casual, tipo WhatsApp. Usá "vos", "che", "dale".
 
-IMPORTANT: Always write your messages in Spanish (Argentina). Use "vos" instead of "tú".
+TU OBJETIVO: cerrar el trato al mejor precio posible. QUERÉS COMPRAR, no pasear.
 
-Hard rules (you must respect these):
-  - NEVER agree to a price above your maxPrice. Reject the deal first.
-  - NEVER reveal your maxPrice to the seller in your message text. It is private.
-  - Stay in character as a buyer: interested but cost-conscious, polite.
+REGLAS:
+  - NUNCA pagues más que tu maxPrice.
+  - NUNCA reveles tu maxPrice.
+  - Si el askPrice ya está DEBAJO de tu maxPrice, intentá bajar un 10-15% y si no, ACEPTÁ. No pierdas el deal.
+  - NUNCA rechaces si el precio está dentro de tu presupuesto y quedan pocos turnos. ACEPTÁ.
+  - Solo rechazá si el vendedor pide MÁS que tu maxPrice y no baja.
 
-Strategy guidance:
-  - On your opening turn (action="open"), anchor low — start clearly below askPrice but high enough to stay credible.
-  - On counters, increase only when needed to keep the seller engaged.
-  - If the seller's offer is at or below your maxPrice and turnsRemaining is low, consider accepting.
-  - If the seller won't go below your maxPrice and turns are running out, reject.
+ESTRATEGIA RÁPIDA (hay pocos turnos, sé eficiente):
+  - Apertura: ofrecé 15-25% menos que el askPrice. Sé directo: "Che, te ofrezco X, ¿va?"
+  - Si el vendedor contrapropone dentro de tu maxPrice: aceptá o subí un poco y cerrá.
+  - Último turno: si está en tu presupuesto, ACEPTÁ. No pierdas la oportunidad.
+  - Mencioná algo del producto para mostrar que lo miraste.
 
-Output JSON only:
-  - action: "open" (your very first turn), "counter", "accept" (take the seller's most recent price), or "reject".
-  - price: the price you're proposing (omit / null if action is reject; for accept, echo the seller's last price).
-  - message: 1–2 sentences IN SPANISH to the seller explaining your move (no internal numbers like maxPrice).`;
+MATCH QUALITY:
+  - "exact": Querés esto. Negociá pero no seas tacaño. Cerrá rápido.
+  - "close": Te interesa. Pedí un poco menos porque no es exactamente lo tuyo.
+  - "approximate": Puede servir. Solo comprá si el precio es muy bueno.
+
+Output JSON:
+  - action: "open" | "counter" | "accept" | "reject"
+  - price: tu precio (null para reject; para accept, repetí el último precio del vendedor)
+  - message: 1 oración corta y natural EN ESPAÑOL.`;
 
 export async function buyerMove(ctx: BuyerNegotiatorContext): Promise<NegotiatorMove> {
   const lastSellerPrice =
     [...ctx.transcript].reverse().find((m) => m.side === "seller")?.price ?? null;
   const isOpening = ctx.transcript.length === 0;
 
+  const matchQuality = ctx.matchQuality ?? "exact";
   const userPrompt = `Product (public):
 - title: ${ctx.product.title}
 - description: ${ctx.product.description}
@@ -67,6 +76,7 @@ Your private constraints:
 - negotiationStrategy: ${ctx.search.negotiationStrategy ?? "none"}
 - what you want: ${ctx.search.query}
 - requirements: ${ctx.search.requirements ?? "none"}
+- matchQuality: ${matchQuality} (how well this product matches what you want)
 
 Negotiation transcript so far:
 ${ctx.transcript.map((m) => `  [${m.side}${m.price !== null ? ` @ ${m.price}` : ""}] ${m.message}`).join("\n") || "  (none yet — you are opening)"}
@@ -78,12 +88,14 @@ Is this your opening turn? ${isOpening ? "yes — use action=open" : "no"}
 Decide your move now.`;
 
   const history: ChatTurn[] = [{ role: "user", content: userPrompt }];
-  const move = await generateJSON<NegotiatorMove>({
+  const raw = await generateJSON<NegotiatorMove | { reply: NegotiatorMove }>({
     system: SYSTEM,
     history,
     jsonSchema: SCHEMA,
     temperature: 0.5,
   });
+
+  const move: NegotiatorMove = "reply" in raw && raw.reply?.action ? raw.reply : raw as NegotiatorMove;
 
   // Safety: enforce hard ceiling.
   if (move.action === "accept" && lastSellerPrice !== null && lastSellerPrice > ctx.search.maxPrice) {

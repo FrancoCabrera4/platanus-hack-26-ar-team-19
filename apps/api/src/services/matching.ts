@@ -4,12 +4,20 @@ import { log } from "@repo/logger";
 import { generateJSON } from "../llm/gemini";
 import { embedText, toVectorLiteral } from "./embeddings";
 import { verifyProductMatch } from "./vision";
-import { checkCandidates, getCategoryAverages, verifyPriceWithMarket } from "./fraud";
+
+export type MatchQuality = "exact" | "close" | "approximate";
 
 export interface MatchCandidate {
   productId: string;
   score: number; // 0..1
   rationale: string;
+  matchQuality: MatchQuality;
+}
+
+function classifyMatchQuality(score: number): MatchQuality {
+  if (score >= 0.9) return "exact";
+  if (score >= 0.75) return "close";
+  return "approximate";
 }
 
 interface ScoringInput {
@@ -117,8 +125,9 @@ const SCORING_SCHEMA = {
           productId: { type: "string" },
           score: { type: "number" },
           rationale: { type: "string" },
+          isExactMatch: { type: "boolean", description: "true ONLY if this is precisely what the buyer asked for (same brand, model, type)" },
         },
-        required: ["productId", "score", "rationale"],
+        required: ["productId", "score", "rationale", "isExactMatch"],
       },
     },
   },
@@ -205,15 +214,7 @@ export async function findMatches(
     candidates = mergeCandidates(fallbackOrig, fallbackExp);
   }
 
-  // Fraud filter — remove suspicious products before scoring
-  const categoryAverages = await getCategoryAverages();
-  const { passed, blocked } = checkCandidates(candidates, categoryAverages);
-  if (blocked.length > 0) {
-    log(`[matching] Fraud filter blocked ${blocked.length} candidates`);
-  }
-  candidates = passed;
-
-  log(`[matching] ${candidates.length} candidates after retrieval + fraud filter`);
+  log(`[matching] ${candidates.length} candidates after retrieval`);
 
   if (candidates.length === 0) return [];
   if (candidates.length === 1) {
@@ -221,6 +222,7 @@ export async function findMatches(
       productId: c.id,
       score: c.similarity,
       rationale: "Único candidato por encima del umbral de similitud.",
+      matchQuality: classifyMatchQuality(c.similarity),
     }));
   }
 
@@ -243,28 +245,29 @@ export async function findMatches(
     })),
   };
 
-  let scored: { matches: MatchCandidate[] };
+  type ScoredMatch = { productId: string; score: number; rationale: string; isExactMatch: boolean };
+  let scored: { matches: ScoredMatch[] };
   try {
-    scored = await generateJSON<{ matches: MatchCandidate[] }>({
-      system: `You are an expert product matching engine for an Argentine marketplace (prices in ARS).
+    scored = await generateJSON<{ matches: ScoredMatch[] }>({
+      system: `You are the world's most precise product matching engine for an Argentine marketplace (prices in ARS).
 
-Score how well each candidate product matches the buyer's search. Consider ALL of these factors:
+Your #1 job: determine if a product is EXACTLY what the buyer asked for, or just something similar.
 
-1. **Semantic relevance** (most important): Is this genuinely what the buyer wants? A "campera North Face" search should NOT match random jackets from other brands.
-2. **Brand matching**: If buyer specified a brand, matching brand gets a big boost. Wrong brand = low score.
-3. **Price reasonableness**: Products near the buyer's maxPrice are ideal. Products much cheaper might be suspicious (bad condition?). Products slightly above budget can still score if they're a great match.
-4. **Category fit**: Does the product belong in the right category?
-5. **Condition/requirements**: Does it meet the buyer's stated requirements?
-6. **Vector similarity hint**: Use the vectorSimilarity as a starting point but override it with your judgment.
+STRICT MATCHING RULES:
+1. **Exact match** (isExactMatch=true, score 0.9-1.0): The product IS what they asked for. Same type, same brand (if specified), same model (if specified). "iPhone 13" → must be an iPhone 13, not an iPhone 12 or a Samsung.
+2. **Close match** (isExactMatch=false, score 0.7-0.89): Same product category, very similar but different brand/model/variant. "campera North Face" → a high-quality outdoor jacket from Patagonia.
+3. **Approximate** (isExactMatch=false, score 0.5-0.69): Related product that could serve the same purpose.
+4. **No match** (isExactMatch=false, score <0.5): Wrong product entirely.
 
-Scoring guide:
-- 0.9-1.0: Perfect match — exactly what buyer wants, right brand, right price range
-- 0.7-0.89: Strong match — same product type, minor differences
-- 0.5-0.69: Decent match — related product, could work
-- 0.3-0.49: Weak match — tangentially related
-- 0.0-0.29: Poor match — wrong product entirely
+CRITICAL PRECISION FACTORS:
+- If buyer says a BRAND → wrong brand = max 0.6, NEVER higher
+- If buyer says a MODEL → wrong model = max 0.5, NEVER higher
+- A generic search ("mesa de madera") can match any wooden table → easier to get exact
+- A specific search ("PlayStation 5") ONLY matches PS5 exactly → nothing else is exact
+- Price within budget is a bonus, NOT a substitute for relevance
+- Category mismatch = automatic cap at 0.3
 
-Be STRICT. Most products should score below 0.5. Only genuine matches deserve high scores.
+BE RUTHLESSLY HONEST. If nothing matches exactly, say so. A score of 0.6 with isExactMatch=false is more useful than a lie of 0.95.
 Return ALL candidates scored, sorted by score descending.`,
       history: [
         {
@@ -273,22 +276,32 @@ Return ALL candidates scored, sorted by score descending.`,
         },
       ],
       jsonSchema: SCORING_SCHEMA,
-      temperature: 0.2,
+      temperature: 0.1,
     });
   } catch (err) {
     log("Match scoring failed, falling back to vector similarity:", (err as Error).message);
     scored = {
-      matches: candidates.map((c) => ({
-        productId: c.id,
-        score: priceAdjustedScore(c.similarity, c.askPrice, search.maxPrice),
-        rationale: "Fallback: vector similarity + price adjustment.",
-      })),
+      matches: candidates.map((c) => {
+        const s = priceAdjustedScore(c.similarity, c.askPrice, search.maxPrice);
+        return {
+          productId: c.id,
+          score: s,
+          rationale: "Fallback: vector similarity + price adjustment.",
+          isExactMatch: s >= 0.9,
+        };
+      }),
     };
   }
 
   const validIds = new Set(candidates.map((c) => c.id));
-  let textRanked = scored.matches
+  let textRanked: MatchCandidate[] = scored.matches
     .filter((m) => validIds.has(m.productId))
+    .map((m) => ({
+      productId: m.productId,
+      score: m.score,
+      rationale: m.rationale,
+      matchQuality: m.isExactMatch ? "exact" as MatchQuality : classifyMatchQuality(m.score),
+    }))
     .sort((a, b) => b.score - a.score)
     .slice(0, Math.max(topN * 2, 8));
 
@@ -307,26 +320,12 @@ Return ALL candidates scored, sorted by score descending.`,
 
   textRanked = await visionRerank(textRanked, candidateMap, buyerDescription);
 
-  const MIN_QUALITY_SCORE = 0.8;
+  const MIN_QUALITY_SCORE = 0.55;
   const qualityFiltered = textRanked.filter((m) => m.score >= MIN_QUALITY_SCORE);
 
-  // Step 6: Market price verification — flag suspiciously cheap products
-  const verified: MatchCandidate[] = [];
-  for (const match of qualityFiltered.slice(0, topN)) {
-    const candidate = candidateMap.get(match.productId);
-    if (!candidate) { verified.push(match); continue; }
+  log(`[matching] Final: ${textRanked.length} scored, ${qualityFiltered.length} quality`);
 
-    const marketCheck = await verifyPriceWithMarket(candidate.title, candidate.askPrice);
-    if (marketCheck?.suspicious) {
-      log(`[matching] Market price fraud: "${candidate.title}" — ${marketCheck.reason}`);
-      continue;
-    }
-    verified.push(match);
-  }
-
-  log(`[matching] Final: ${textRanked.length} scored, ${qualityFiltered.length} quality, ${verified.length} verified`);
-
-  return verified;
+  return qualityFiltered.slice(0, topN);
 }
 
 // --- Price-aware scoring ---
@@ -373,10 +372,14 @@ async function visionRerank(
         );
 
         if (visionResult.matches) {
+          const boostedScore = match.score * (0.6 + visionResult.confidence * 0.4);
           return {
             ...match,
-            score: match.score * (0.6 + visionResult.confidence * 0.4),
+            score: boostedScore,
             rationale: `${match.rationale} | Vision OK (${Math.round(visionResult.confidence * 100)}%): ${visionResult.reason}`,
+            matchQuality: visionResult.confidence >= 0.85 && match.matchQuality === "exact"
+              ? "exact" as MatchQuality
+              : classifyMatchQuality(boostedScore),
           };
         }
         log(`[vision] Rejected "${candidate.title}": ${visionResult.reason}`);
@@ -384,6 +387,7 @@ async function visionRerank(
           ...match,
           score: match.score * 0.15,
           rationale: `${match.rationale} | Vision REJECTED: ${visionResult.reason}`,
+          matchQuality: "approximate" as MatchQuality,
         };
       }),
     );
@@ -557,11 +561,15 @@ function mergeCandidates(
 }
 
 function candidatesToMatches(candidates: ProductCandidate[], maxPrice: number): MatchCandidate[] {
-  return candidates.map((candidate) => ({
-    productId: candidate.id,
-    score: priceAdjustedScore(candidate.similarity, candidate.askPrice, maxPrice),
-    rationale: "Fallback retrieval score.",
-  }));
+  return candidates.map((candidate) => {
+    const score = priceAdjustedScore(candidate.similarity, candidate.askPrice, maxPrice);
+    return {
+      productId: candidate.id,
+      score,
+      rationale: "Fallback retrieval score.",
+      matchQuality: classifyMatchQuality(score),
+    };
+  });
 }
 
 function normalizeCategory(category: string | null): string | null {

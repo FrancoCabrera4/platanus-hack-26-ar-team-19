@@ -15,6 +15,24 @@ model User {
   name         String
   email        String   @unique
   passwordHash String?
+  location     String?
+
+  // MercadoPago
+  mpAccessToken  String?
+  mpRefreshToken String?
+  mpPublicKey    String?
+  mpUserId       String?
+  mpConnected    Boolean  @default(false)
+  mpCustomerId   String?
+  mpCardId       String?
+  mpCardLastFour String?
+
+  // Auto-pay: agent pays automatically when deal closes
+  autoPayEnabled      Boolean  @default(false)
+  autoPayMaxAmount    Float?
+  autoPayCategories   String[] @default([])
+  autoPayMaxPerSearch Int      @default(1)
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -23,6 +41,9 @@ model User {
   buyerSearches BuyerSearch[]
   purchases     Negotiation[] @relation("BuyerNegotiations")
   sales         Negotiation[] @relation("SellerNegotiations")
+  buyerChats    Chat[]        @relation("BuyerChats")
+  sellerChats   Chat[]        @relation("SellerChats")
+  chatMessages  ChatMessage[] @relation("ChatMessages")
   sessions      Session[]
 }
 
@@ -146,12 +167,23 @@ model Negotiation {
   buyerId     String
   sellerId    String
   status      String    @default("pending")
-    // pending | running | awaiting_buyer | accepted | rejected | timed_out | error
+    // pending | running | awaiting_buyer | paying | accepted | rejected | timed_out | error
   successful  Boolean   @default(false)
   finalPrice  Float?
   reason      String?
   startedAt   DateTime?
   completedAt DateTime?
+
+  // MercadoPago payment
+  mpPreferenceId String?
+  mpPaymentId    String?
+  paymentStatus  String?   // pending | approved | rejected
+  autoPaid       Boolean   @default(false)
+
+  // Verification code for in-person delivery
+  verificationCode String?
+  codeVerifiedAt   DateTime?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -160,6 +192,7 @@ model Negotiation {
   buyer    User                 @relation("BuyerNegotiations", fields: [buyerId], references: [id])
   seller   User                 @relation("SellerNegotiations", fields: [sellerId], references: [id])
   messages NegotiationMessage[]
+  chat     Chat?
 
   @@index([searchId])
   @@index([productId])
@@ -180,6 +213,37 @@ model NegotiationMessage {
   negotiation Negotiation @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
 
   @@index([negotiationId])
+}
+
+// Direct chat between buyer and seller after a negotiation closes.
+model Chat {
+  id            String   @id @default(uuid())
+  negotiationId String   @unique
+  buyerId       String
+  sellerId      String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  negotiation Negotiation @relation(fields: [negotiationId], references: [id])
+  buyer       User        @relation("BuyerChats", fields: [buyerId], references: [id])
+  seller      User        @relation("SellerChats", fields: [sellerId], references: [id])
+  messages    ChatMessage[]
+
+  @@index([buyerId])
+  @@index([sellerId])
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  chatId    String
+  senderId  String
+  content   String
+  createdAt DateTime @default(now())
+
+  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender User @relation("ChatMessages", fields: [senderId], references: [id])
+
+  @@index([chatId])
 }
 
 // Background job tracking for async match+negotiate runs.

@@ -12,6 +12,8 @@ import { negotiationsRouter } from "./routes/negotiations";
 import { jobsRouter } from "./routes/jobs";
 import { authRouter } from "./routes/auth";
 import { uploadsRouter } from "./routes/uploads";
+import { paymentsRouter } from "./routes/payments";
+import { dashboardRouter } from "./routes/dashboard";
 import { log } from "@repo/logger";
 
 export const createServer = (): Express => {
@@ -35,7 +37,9 @@ export const createServer = (): Express => {
     .use("/searches", searchesRouter)
     .use("/negotiations", negotiationsRouter)
     .use("/jobs", jobsRouter)
-    .use("/uploads", uploadsRouter);
+    .use("/uploads", uploadsRouter)
+    .use("/payments", paymentsRouter)
+    .use("/dashboard", dashboardRouter);
 
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     log("ERROR", err.message, err.stack);

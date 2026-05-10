@@ -3,8 +3,9 @@ import { log } from "@repo/logger";
 import { buyerMove, type BuyerNegotiatorContext } from "../agents/buyer-negotiator";
 import { sellerMove, type SellerNegotiatorContext } from "../agents/seller-negotiator";
 import type { NegotiatorMove } from "../agents/seller-negotiator";
+import type { MatchQuality } from "./matching";
 
-const MAX_TURNS = 8; // 4 buyer turns + 4 seller turns
+const MAX_TURNS = 4; // 2 buyer + 2 seller = fast negotiation
 
 export interface NegotiationResult {
   negotiationId: string;
@@ -26,7 +27,7 @@ interface TranscriptEntry {
  * left in `awaiting_buyer`; the buyer must explicitly confirm via POST /negotiations/:id/accept
  * to flip it to `accepted` and mark the product as sold.
  */
-export async function runNegotiation(searchId: string, productId: string): Promise<NegotiationResult> {
+export async function runNegotiation(searchId: string, productId: string, matchQuality: MatchQuality = "exact"): Promise<NegotiationResult> {
   const [search, product] = await Promise.all([
     prisma.buyerSearch.findUnique({ where: { id: searchId } }),
     prisma.product.findUnique({ where: { id: productId } }),
@@ -107,6 +108,7 @@ export async function runNegotiation(searchId: string, productId: string): Promi
             },
             transcript,
             turnsRemaining,
+            matchQuality,
           };
           const move = await buyerMove(ctx);
           await persistTurn("buyer", move);

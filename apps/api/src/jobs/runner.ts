@@ -1,7 +1,8 @@
 import prisma from "@repo/db";
 import { log } from "@repo/logger";
-import { findMatches } from "../services/matching";
+import { findMatches, type MatchQuality } from "../services/matching";
 import { runNegotiation } from "../services/negotiation";
+import { tryAutoPay } from "../services/auto-pay";
 
 export interface RunSearchJobPayload {
   searchId: string;
@@ -9,19 +10,22 @@ export interface RunSearchJobPayload {
 }
 
 export interface RunSearchJobResult {
-  matches: { productId: string; score: number; rationale: string }[];
+  matches: { productId: string; score: number; rationale: string; matchQuality: MatchQuality }[];
   negotiations: {
     productId: string;
     negotiationId: string;
     status: string;
     successful: boolean;
     finalPrice: number | null;
+    matchQuality: MatchQuality;
   }[];
   successfulNegotiation: {
     negotiationId: string;
     productId: string;
     finalPrice: number;
+    matchQuality: MatchQuality;
   } | null;
+  bestMatchQuality: MatchQuality | "no_match";
 }
 
 /**
@@ -92,59 +96,52 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
   const search = await prisma.buyerSearch.findUnique({ where: { id: payload.searchId } });
   if (!search) throw new Error(`Search ${payload.searchId} not found`);
 
-  // Phase 1: Create all negotiations as "pending" sorted by score (best first)
-  // so the frontend shows matched products immediately.
   const sortedMatches = [...matches].sort((a, b) => b.score - a.score);
-  const pendingNegs: { productId: string; negotiationId: string; score: number }[] = [];
-  for (const m of sortedMatches) {
-    const product = await prisma.product.findUnique({ where: { id: m.productId } });
-    if (!product) continue;
+  const bestMatchQuality: MatchQuality | "no_match" = sortedMatches.length > 0
+    ? sortedMatches[0]!.matchQuality
+    : "no_match";
 
-    const neg = await prisma.negotiation.create({
-      data: {
-        searchId: payload.searchId,
-        productId: m.productId,
-        buyerId: search.buyerId,
-        sellerId: product.userId,
-        status: "pending",
-      },
-    });
-    pendingNegs.push({ productId: m.productId, negotiationId: neg.id, score: m.score });
-  }
-
-  // Phase 2: Negotiate best matches first. Stop after first successful deal.
   const negotiations: RunSearchJobResult["negotiations"] = [];
   let successfulNegotiation: RunSearchJobResult["successfulNegotiation"] = null;
 
-  for (const pn of pendingNegs) {
+  for (const m of sortedMatches) {
     if (successfulNegotiation) {
-      log(`[runner] Skipping negotiation for ${pn.productId.slice(0, 8)} — already have a deal`);
-      negotiations.push({
-        productId: pn.productId,
-        negotiationId: pn.negotiationId,
-        status: "pending",
-        successful: false,
-        finalPrice: null,
-      });
+      log(`[runner] Skipping ${m.productId.slice(0, 8)} — already have a deal`);
       continue;
     }
 
-    log(`[runner] Negotiating ${pn.productId.slice(0, 8)} (score: ${pn.score.toFixed(2)})`);
-    const result = await runNegotiation(payload.searchId, pn.productId);
+    const product = await prisma.product.findUnique({ where: { id: m.productId } });
+    if (!product) continue;
+
+    log(`[runner] Negotiating ${m.productId.slice(0, 8)} (score: ${m.score.toFixed(2)}, quality: ${m.matchQuality})`);
+    const result = await runNegotiation(payload.searchId, m.productId, m.matchQuality);
     negotiations.push({
-      productId: pn.productId,
+      productId: m.productId,
       negotiationId: result.negotiationId,
       status: result.status,
       successful: result.successful,
       finalPrice: result.finalPrice,
+      matchQuality: m.matchQuality,
     });
-    if (result.status === "accepted" && result.finalPrice !== null) {
+
+    if (result.status === "awaiting_buyer" && result.finalPrice !== null) {
       successfulNegotiation = {
         negotiationId: result.negotiationId,
-        productId: pn.productId,
+        productId: m.productId,
         finalPrice: result.finalPrice,
+        matchQuality: m.matchQuality,
       };
-      log(`[runner] Deal closed! ${pn.productId.slice(0, 8)} at $${result.finalPrice}`);
+      log(`[runner] Deal closed! ${m.productId.slice(0, 8)} at $${result.finalPrice} (${m.matchQuality})`);
+
+      const autoPaid = await tryAutoPay(
+        result.negotiationId,
+        search.buyerId,
+        result.finalPrice,
+        product.category ?? null,
+      );
+      if (autoPaid) {
+        log(`[runner] Auto-pay succeeded for ${result.negotiationId}`);
+      }
     }
   }
 
@@ -153,5 +150,5 @@ async function executeRunSearch(payload: RunSearchJobPayload): Promise<RunSearch
     data: { status: "completed" },
   });
 
-  return { matches, negotiations, successfulNegotiation };
+  return { matches, negotiations, successfulNegotiation, bestMatchQuality };
 }

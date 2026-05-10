@@ -20,7 +20,11 @@ export interface MLPriceRef {
 }
 
 const ML_API = "https://api.mercadolibre.com";
-const SITE = "MLA"; // Argentina
+const SITE = "MPE"; // Peru
+
+function mlToken(): string | undefined {
+  return process.env.MP_ACCESS_TOKEN_PROD || process.env.MP_ACCESS_TOKEN_TEST || undefined;
+}
 
 export async function searchMercadoLibre(
   query: string,
@@ -28,7 +32,10 @@ export async function searchMercadoLibre(
 ): Promise<MLProduct[]> {
   try {
     const url = `${ML_API}/sites/${SITE}/search?q=${encodeURIComponent(query)}&limit=${limit}&sort=relevance`;
-    const res = await fetch(url);
+    const token = mlToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(url, { headers });
     if (!res.ok) {
       log("MercadoLibre API error:", res.status);
       return [];

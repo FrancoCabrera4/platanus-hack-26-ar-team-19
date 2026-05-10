@@ -31,7 +31,10 @@ searchesRouter.get("/:id", async (req, res) => {
     where: { id: req.params.id },
     include: {
       negotiations: {
-        include: { product: { select: { id: true, title: true, askPrice: true, imageUrl: true } } },
+        include: {
+          product: { select: { id: true, title: true, description: true, askPrice: true, imageUrl: true, category: true, condition: true } },
+          messages: { orderBy: { createdAt: "asc" } },
+        },
       },
       jobs: { orderBy: { createdAt: "desc" }, take: 5 },
     },

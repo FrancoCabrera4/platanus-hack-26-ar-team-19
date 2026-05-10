@@ -1,0 +1,24 @@
+FROM node:20-slim AS base
+RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
+WORKDIR /app
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json ./
+COPY apps/api/package.json apps/api/
+COPY packages/db/package.json packages/db/
+COPY packages/logger/package.json packages/logger/
+COPY packages/config-eslint/package.json packages/config-eslint/
+COPY packages/config-typescript/package.json packages/config-typescript/
+COPY packages/ui/package.json packages/ui/
+COPY packages/tailwind-config/package.json packages/tailwind-config/
+RUN pnpm install --frozen-lockfile
+
+COPY packages/ packages/
+COPY apps/api/ apps/api/
+
+RUN pnpm --filter @repo/db exec prisma generate
+RUN pnpm --filter api build
+
+ENV NODE_ENV=production
+EXPOSE 4000
+CMD ["node", "apps/api/dist/index.js"]

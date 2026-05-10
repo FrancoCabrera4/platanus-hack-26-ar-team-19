@@ -37,6 +37,7 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
+  mpConnected: boolean;
 };
 
 export type AuthResponse = {
@@ -213,7 +214,10 @@ export type NegotiationSummary = {
   successful: boolean;
   finalPrice: number | null;
   reason: string | null;
-  product: { id: string; title: string; askPrice: number; imageUrl: string | null };
+  autoPaid?: boolean;
+  verificationCode?: string | null;
+  product: { id: string; title: string; description?: string; askPrice: number; imageUrl: string | null; category?: string | null; condition?: string | null };
+  messages?: NegotiationMessage[];
 };
 
 export type SearchDetail = {
@@ -280,6 +284,106 @@ export async function acceptNegotiation(id: string): Promise<NegotiationDetail> 
 
 export async function getJob(id: string): Promise<JobDetail> {
   return apiFetch<JobDetail>(`/jobs/${id}`);
+}
+
+// --- MercadoPago Payments ---
+
+export type PaymentPreference = {
+  preferenceId: string;
+  payUrl: string;
+  verificationCode: string;
+};
+
+export async function createPaymentPreference(negotiationId: string): Promise<PaymentPreference> {
+  return apiFetch<PaymentPreference>("/payments/create-preference", {
+    method: "POST",
+    body: JSON.stringify({ negotiationId }),
+  });
+}
+
+export async function getPaymentStatus(negotiationId: string) {
+  return apiFetch<{
+    status: string;
+    successful: boolean;
+    paymentStatus: string | null;
+    verificationCode: string | null;
+  }>(`/payments/status/${negotiationId}`);
+}
+
+export async function verifyDeliveryCode(negotiationId: string, code: string) {
+  return apiFetch<{ verified: boolean }>("/payments/verify-code", {
+    method: "POST",
+    body: JSON.stringify({ negotiationId, code }),
+  });
+}
+
+export async function saveCard(cardToken: string): Promise<{ ok: boolean; lastFour: string }> {
+  return apiFetch<{ ok: boolean; lastFour: string }>("/payments/mp/save-card", {
+    method: "POST",
+    body: JSON.stringify({ cardToken }),
+  });
+}
+
+export type AutoPaySettings = {
+  autoPayEnabled: boolean;
+  autoPayMaxAmount: number | null;
+  autoPayCategories: string[];
+  autoPayMaxPerSearch: number;
+  mpConnected: boolean;
+};
+
+export async function getAutoPaySettings(): Promise<AutoPaySettings> {
+  return apiFetch<AutoPaySettings>("/payments/auto-pay-settings");
+}
+
+export async function updateAutoPaySettings(settings: {
+  enabled: boolean;
+  maxAmount: number | null;
+  categories: string[];
+  maxPerSearch: number;
+}) {
+  return apiFetch<{ ok: boolean }>("/payments/auto-pay-settings", {
+    method: "POST",
+    body: JSON.stringify(settings),
+  });
+}
+
+// --- MercadoPago Integration ---
+
+export async function getMpConnectUrl(): Promise<{ url: string }> {
+  return apiFetch<{ url: string }>("/payments/mp/connect");
+}
+
+export async function disconnectMp(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>("/payments/mp/disconnect", { method: "POST" });
+}
+
+// --- Dashboard ---
+
+export type DashboardNegotiation = {
+  id: string;
+  status: string;
+  successful: boolean;
+  finalPrice: number | null;
+  reason: string | null;
+  paymentStatus: string | null;
+  autoPaid: boolean;
+  verificationCode: string | null;
+  codeVerifiedAt: string | null;
+  product: { id: string; title: string; askPrice: number; imageUrl: string | null; category: string | null };
+  buyer?: { id: string; name: string; email: string };
+  seller?: { id: string; name: string; email: string };
+  messages: NegotiationMessage[];
+  updatedAt: string;
+};
+
+export type DashboardData = {
+  sales: DashboardNegotiation[];
+  purchases: DashboardNegotiation[];
+};
+
+export async function getDashboard(): Promise<DashboardData> {
+  return apiFetch<DashboardData>("/dashboard");
 }
 
 // --- Image upload ---

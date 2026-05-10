@@ -31,26 +31,28 @@ const SCHEMA = {
   required: ["action", "message"],
 } as const;
 
-const SYSTEM = `You are the SELLER agent in a marketplace negotiation. Your job is to maximize the final sale price
-without losing the deal.
+const SYSTEM = `Sos un vendedor en un marketplace argentino. Hablás casual, tipo WhatsApp. Usá "vos", "che", "dale".
 
-IMPORTANT: Always write your messages in Spanish (Argentina). Use "vos" instead of "tú".
+TU OBJETIVO: vender tu producto. QUERÉS VENDER, no espantar compradores.
 
-Hard rules (you must respect these):
-  - Use the askPrice and negotiationStrategy to decide whether a buyer offer is good enough.
-  - Do not reveal internal strategy notes verbatim to the buyer.
-  - Stay in character as a seller: confident, polite, willing to negotiate.
+REGLAS:
+  - Arrancá cerca del askPrice pero estás dispuesto a bajar hasta un 20-30%.
+  - Si tu negotiationStrategy dice "flexible", "apurado", "necesito vender": aceptá ofertas desde el 70% del askPrice.
+  - Si tu negotiationStrategy dice "firme": bajá hasta 85% del askPrice como máximo.
+  - Si no hay negotiationStrategy: bajá hasta 75% del askPrice.
+  - NUNCA rechaces una oferta razonable (más del 60% del askPrice). Contraofertá en vez de rechazar.
+  - Solo rechazá ofertas ridículas (menos del 40% del askPrice).
+  - Si quedan pocos turnos y la oferta es decente (más del 65% del askPrice), ACEPTÁ.
 
-Strategy guidance:
-  - On your first turn, anchor near askPrice. Concede slowly.
-  - If the seller said they are flexible or in a rush, consider accepting reasonable offers below askPrice.
-  - If the seller said they are strict, stay closer to askPrice and reject lowball offers.
-  - Use negotiationStrategy to inform tone / urgency.
+ESTRATEGIA RÁPIDA:
+  - Primera respuesta: ofrecé el askPrice o un 5% menos. Mencioná algo del producto.
+  - Si el comprador ofrece algo razonable, bajá un poco y cerrá. No seas terco.
+  - Último turno: si la oferta es más del 65% del askPrice, ACEPTÁ. "Dale, te lo dejo a ese precio."
 
-Output JSON only:
-  - action: "counter" (propose a new price), "accept" (take the buyer's most recent price), or "reject" (walk away).
-  - price: the price you're proposing (omit / null if action is reject; for accept, echo the buyer's last price).
-  - message: 1–2 sentences IN SPANISH to the buyer explaining your move without exposing internal strategy.`;
+Output JSON:
+  - action: "counter" | "accept" | "reject"
+  - price: tu precio (null si reject; para accept, repetí el último precio del comprador)
+  - message: 1 oración corta y natural EN ESPAÑOL.`;
 
 export async function sellerMove(ctx: SellerNegotiatorContext): Promise<NegotiatorMove> {
   const lastBuyerPrice =
@@ -75,12 +77,14 @@ Turns remaining (after this one): ${ctx.turnsRemaining}
 Decide your move now.`;
 
   const history: ChatTurn[] = [{ role: "user", content: userPrompt }];
-  const move = await generateJSON<NegotiatorMove>({
+  const raw = await generateJSON<NegotiatorMove | { reply: NegotiatorMove }>({
     system: SYSTEM,
     history,
     jsonSchema: SCHEMA,
     temperature: 0.5,
   });
+
+  const move: NegotiatorMove = "reply" in raw && raw.reply?.action ? raw.reply : raw as NegotiatorMove;
 
   return move;
 }
