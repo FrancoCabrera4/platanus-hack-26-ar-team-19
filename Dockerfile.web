@@ -9,7 +9,7 @@ COPY packages/logger/package.json packages/logger/
 COPY packages/config-eslint/package.json packages/config-eslint/
 COPY packages/config-typescript/package.json packages/config-typescript/
 COPY packages/ui/package.json packages/ui/
-COPY packages/tailwind-config/package.json packages/tailwind-config/
+COPY packages/config-tailwind/package.json packages/config-tailwind/
 RUN pnpm install --frozen-lockfile
 
 COPY packages/ packages/
