@@ -1,6 +1,13 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -16,6 +23,7 @@ import {
   type DashboardDeal,
   type ShippingSuggestion,
 } from "@/lib/api";
+import { formatApproximateLocation } from "@/lib/location";
 
 type Tab = "all" | "buyer" | "seller";
 
@@ -115,15 +123,7 @@ export default function DashboardPage() {
       <header className="sticky top-0 z-20 border-b border-border bg-background/85 px-4 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4">
           <Link href="/explore" className="shrink-0">
-            <p
-              className="text-lg tracking-tight"
-              style={{
-                fontFamily: "var(--font-heading)",
-                fontStyle: "italic",
-              }}
-            >
-              negocIA
-            </p>
+            <img src="/logo.svg" alt="negocIA" className="h-10" />
           </Link>
           <nav className="flex items-center gap-2">
             <Link
@@ -351,7 +351,10 @@ function DealDetail({
               label="Categoria"
               value={deal.product.category ?? "General"}
             />
-            <Metric label="Operacion" value={deal.role === "buyer" ? "Compra" : "Venta"} />
+            <Metric
+              label="Operacion"
+              value={deal.role === "buyer" ? "Compra" : "Venta"}
+            />
           </dl>
         </div>
         <div className="h-56 bg-muted lg:h-auto">
@@ -395,8 +398,12 @@ function ShippingAssistant({
   currentUser: AuthUser;
   onUserChange: (user: AuthUser) => void;
 }) {
-  const [locationDraft, setLocationDraft] = useState(currentUser.location ?? "");
-  const [suggestion, setSuggestion] = useState<ShippingSuggestion | null>(deal.midpoint);
+  const [locationDraft, setLocationDraft] = useState(
+    currentUser.location ?? "",
+  );
+  const [suggestion, setSuggestion] = useState<ShippingSuggestion | null>(
+    deal.midpoint,
+  );
   const [loading, setLoading] = useState(false);
   const [savingLocation, setSavingLocation] = useState(false);
   const [detectingLocation, setDetectingLocation] = useState(false);
@@ -416,7 +423,8 @@ function ShippingAssistant({
   // Scroll chat to bottom when messages change
   useEffect(() => {
     if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      chatContainerRef.current.scrollTop =
+        chatContainerRef.current.scrollHeight;
     }
   }, [chatMessages]);
 
@@ -466,7 +474,9 @@ function ShippingAssistant({
 
   function handleDetectLocation() {
     if (!navigator.geolocation || detectingLocation) {
-      setError("Tu navegador no permite detectar la ubicación automáticamente.");
+      setError(
+        "Tu navegador no permite detectar la ubicación automáticamente.",
+      );
       return;
     }
 
@@ -474,13 +484,18 @@ function ShippingAssistant({
     setError(null);
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const latitude = position.coords.latitude.toFixed(5);
-        const longitude = position.coords.longitude.toFixed(5);
-        setLocationDraft(`Ubicación actual (${latitude}, ${longitude})`);
+        setLocationDraft(
+          formatApproximateLocation(
+            position.coords.latitude,
+            position.coords.longitude,
+          ),
+        );
         setDetectingLocation(false);
       },
       () => {
-        setError("No pude detectar tu ubicación. Podés escribir una zona aproximada.");
+        setError(
+          "No pude detectar tu ubicación. Podés escribir una zona aproximada.",
+        );
         setDetectingLocation(false);
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
@@ -564,7 +579,8 @@ function ShippingAssistant({
           </ChatBubble>
           {suggestion && (
             <ChatBubble side="assistant">
-              Propongo <span className="font-medium">{suggestion.midpointLabel}</span>.{" "}
+              Propongo{" "}
+              <span className="font-medium">{suggestion.midpointLabel}</span>.{" "}
               {suggestion.rationale}
             </ChatBubble>
           )}
@@ -582,7 +598,10 @@ function ShippingAssistant({
               </p>
             </div>
 
-            <div ref={chatContainerRef} className="max-h-72 space-y-3 overflow-y-auto p-4">
+            <div
+              ref={chatContainerRef}
+              className="max-h-72 space-y-3 overflow-y-auto p-4"
+            >
               <ChatBubble side="assistant">
                 Punto sugerido:{" "}
                 <span className="font-medium">{suggestion.midpointLabel}</span>.
@@ -667,7 +686,9 @@ function ShippingAssistant({
               disabled={detectingLocation}
               className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-lg border border-input bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {detectingLocation ? "Detectando..." : "Detectar ubicación actual"}
+              {detectingLocation
+                ? "Detectando..."
+                : "Detectar ubicación actual"}
             </button>
           </>
         )}
@@ -677,7 +698,11 @@ function ShippingAssistant({
           disabled={!canSuggest || loading}
           className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {savingLocation ? "Guardando..." : loading ? "Pensando..." : "Sugerir punto medio"}
+          {savingLocation
+            ? "Guardando..."
+            : loading
+              ? "Pensando..."
+              : "Sugerir punto medio"}
         </button>
 
         {suggestion && (

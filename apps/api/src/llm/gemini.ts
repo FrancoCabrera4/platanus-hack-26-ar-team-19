@@ -170,6 +170,25 @@ function normalizeResult(
   return parsed;
 }
 
+function parseJSONResponse(text: string): Record<string, unknown> {
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1];
+    if (fenced) {
+      return JSON.parse(fenced) as Record<string, unknown>;
+    }
+
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start !== -1 && end > start) {
+      return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+    }
+
+    throw new Error("No JSON object found in response");
+  }
+}
+
 class ReplyExtractor {
   private phase: "searching" | "in_reply" | "done" = "searching";
   private buffer = "";
@@ -271,7 +290,7 @@ export async function generateJSON<T>(opts: GenerateOptions): Promise<T> {
   });
   log("LLM raw response:", text);
   try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const parsed = parseJSONResponse(text);
     return normalizeResult(parsed, opts.jsonSchema) as T;
   } catch (err) {
     log(`${provider} returned invalid JSON:`, text);
@@ -326,7 +345,7 @@ async function generateOpenAiStreamJSON<T>(
 
   log("LLM raw streamed response:", fullText);
   try {
-    const parsed = JSON.parse(fullText) as Record<string, unknown>;
+    const parsed = parseJSONResponse(fullText);
     return normalizeResult(parsed, opts.jsonSchema) as T;
   } catch (err) {
     log("openai returned invalid JSON (stream):", fullText);
@@ -368,7 +387,7 @@ async function generateGeminiStreamJSON<T>(
 
   log("LLM raw streamed response:", fullText);
   try {
-    const parsed = JSON.parse(fullText) as Record<string, unknown>;
+    const parsed = parseJSONResponse(fullText);
     return normalizeResult(parsed, opts.jsonSchema) as T;
   } catch (err) {
     log("gemini returned invalid JSON (stream):", fullText);

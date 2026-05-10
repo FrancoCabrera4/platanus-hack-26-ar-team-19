@@ -7,6 +7,7 @@ import { Button } from "@repo/ui/components/ui/button";
 import { Input } from "@repo/ui/components/ui/input";
 import { Label } from "@repo/ui/components/ui/label";
 import { ApiError, signup } from "@/lib/api";
+import { formatApproximateLocation } from "@/lib/location";
 
 export default function SignupPage() {
   const [name, setName] = useState("");
@@ -20,7 +21,9 @@ export default function SignupPage() {
 
   function handleDetectLocation() {
     if (!navigator.geolocation || detectingLocation) {
-      setError("Tu navegador no permite detectar la ubicación automáticamente.");
+      setError(
+        "Tu navegador no permite detectar la ubicación automáticamente.",
+      );
       return;
     }
 
@@ -28,13 +31,18 @@ export default function SignupPage() {
     setError(null);
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const latitude = position.coords.latitude.toFixed(5);
-        const longitude = position.coords.longitude.toFixed(5);
-        setLocation(`Ubicación actual (${latitude}, ${longitude})`);
+        setLocation(
+          formatApproximateLocation(
+            position.coords.latitude,
+            position.coords.longitude,
+          ),
+        );
         setDetectingLocation(false);
       },
       () => {
-        setError("No pude detectar tu ubicación. Podés escribir una zona aproximada.");
+        setError(
+          "No pude detectar tu ubicación. Podés escribir una zona aproximada.",
+        );
         setDetectingLocation(false);
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
@@ -50,7 +58,11 @@ export default function SignupPage() {
       router.push("/explore");
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "signup_failed";
-      setError(code === "email_already_registered" ? "Ese email ya está registrado." : "No se pudo crear la cuenta.");
+      setError(
+        code === "email_already_registered"
+          ? "Ese email ya está registrado."
+          : "No se pudo crear la cuenta.",
+      );
     } finally {
       setLoading(false);
     }
@@ -73,10 +85,13 @@ export default function SignupPage() {
             con IA de tu lado.
           </p>
           <p className="text-background/60 max-w-md">
-            Creá tu cuenta y dejá que un agente inteligente negocie el mejor precio por vos.
+            Creá tu cuenta y dejá que un agente inteligente negocie el mejor
+            precio por vos.
           </p>
         </div>
-        <p className="text-background/40 text-sm">Platanus Hack 26 — Agentic Money</p>
+        <p className="text-background/40 text-sm">
+          Platanus Hack 26 — Agentic Money
+        </p>
       </div>
 
       {/* Right panel */}
@@ -141,7 +156,9 @@ export default function SignupPage() {
                 onClick={handleDetectLocation}
                 disabled={detectingLocation}
               >
-                {detectingLocation ? "Detectando..." : "Detectar ubicación actual"}
+                {detectingLocation
+                  ? "Detectando..."
+                  : "Detectar ubicación actual"}
               </Button>
             </div>
 
@@ -164,7 +181,10 @@ export default function SignupPage() {
 
           <p className="text-center text-sm text-muted-foreground mt-6">
             Ya tenés cuenta?{" "}
-            <Link href="/login" className="text-foreground font-medium hover:underline">
+            <Link
+              href="/login"
+              className="text-foreground font-medium hover:underline"
+            >
               Iniciar sesión
             </Link>
           </p>

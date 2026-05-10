@@ -148,8 +148,7 @@ async function completeConversation(
       !productState.title ||
       !productState.description ||
       !productState.askPrice ||
-      !productState.negotiationStrategy ||
-      !productState.imageUrl
+      !productState.negotiationStrategy
     ) {
       return {};
     }
