@@ -43,9 +43,9 @@ export default function SignupPage() {
             className="text-4xl leading-tight mb-6"
             style={{ fontFamily: "var(--font-heading)", fontStyle: "italic" }}
           >
-            Comprá y vendé
+            El marketplace que compra por ti,
             <br />
-            con IA de tu lado.
+            negocia por ti, y paga por ti.
           </p>
           <p className="text-background/60 max-w-md">
             Creá tu cuenta y dejá que un agente inteligente negocie el mejor precio por vos.
