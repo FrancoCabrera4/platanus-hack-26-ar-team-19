@@ -4,6 +4,16 @@ Marketplace agentico para comprar y vender usado sin tener que revisar cientos d
 
 negocIA permite que una persona describa qué quiere comprar o qué quiere vender en lenguaje natural. A partir de eso, agentes de IA arman publicaciones, buscan productos compatibles, comparan candidatos, negocian entre comprador y vendedor, y dejan el acuerdo listo para que la persona lo revise y coordine la entrega.
 
+## Overview Arquitectura (tl;dr)
+![Architecture overview](./important/C_tTQZPW0AAHTU8.jpg)
+
+Se realizó scrapping the facebook marketplace para obtener la data, se normalizó eliminando 
+outliers por precio primero mediante cotas fijas y luego calculando la desviación estandar del resto y sacando los outliers en base a ello.
+Se utiliza RAG mediante una base vectorial de embeddings que representan los productos en la DB y también, naturalmente se hacen los embeddings de las queries para comparar respecto a los
+productos.
+Pequeños flows de agentes e integraciones con mercado pago.
+
+
 ## Por qué existe
 
 Comprar usado suele ser lento: buscar, filtrar, preguntar si sigue disponible, comparar precios, regatear y coordinar entrega. Vender también tiene fricción: escribir la publicación, responder preguntas repetidas y decidir cuánto bajar el precio.
