@@ -22,7 +22,7 @@ export default function SignupPage() {
     setError(null);
     try {
       await signup({ name, email, password });
-      router.push("/explore");
+      router.push("/onboarding");
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "signup_failed";
       setError(code === "email_already_registered" ? "Ese email ya está registrado." : "No se pudo crear la cuenta.");
