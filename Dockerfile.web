@@ -15,6 +15,13 @@ RUN pnpm install --frozen-lockfile
 COPY packages/ packages/
 COPY apps/web/ apps/web/
 
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_OPENAI_API_KEY
+ARG NEXT_PUBLIC_MP_PUBLIC_KEY
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_OPENAI_API_KEY=$NEXT_PUBLIC_OPENAI_API_KEY
+ENV NEXT_PUBLIC_MP_PUBLIC_KEY=$NEXT_PUBLIC_MP_PUBLIC_KEY
+
 RUN pnpm --filter @repo/db exec prisma generate
 RUN pnpm --filter web build
 
