@@ -17,7 +17,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: apps/api/Dockerfile
+      dockerfile: Dockerfile.api
     restart: always
     depends_on:
       db:
@@ -44,7 +44,7 @@ services:
   web:
     build:
       context: .
-      dockerfile: apps/web/Dockerfile
+      dockerfile: Dockerfile.web
     restart: always
     depends_on:
       - api

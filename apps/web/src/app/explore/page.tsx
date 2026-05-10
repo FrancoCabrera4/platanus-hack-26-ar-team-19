@@ -714,7 +714,6 @@ export default function ExplorePage() {
     if (!tile.negId) return;
     try {
       await acceptNegotiation(tile.negId);
-      setActiveSearchTile(null);
       showPurchaseSuccess(tile, false);
       setSearchTiles((prev) =>
         prev.map((t) => t.id === tile.id ? { ...t, negStatus: "accepted" as NegStatus } : t),
@@ -723,7 +722,6 @@ export default function ExplorePage() {
   }
 
   function handleRejectDeal(tile: Tile) {
-    setActiveSearchTile(null);
     setSearchTiles((prev) =>
       prev.map((t) => t.id === tile.id ? { ...t, negStatus: "rejected" as NegStatus } : t),
     );
