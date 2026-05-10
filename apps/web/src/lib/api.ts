@@ -385,18 +385,13 @@ export async function uploadImage(file: File): Promise<{ url: string }> {
 export async function transcribeAudio(audioBlob: Blob): Promise<string> {
   const form = new FormData();
   form.append("file", audioBlob, "audio.webm");
-  form.append("model", "whisper-1");
-  form.append("language", "es");
 
-  const key = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
-  if (!key) throw new Error("Missing NEXT_PUBLIC_OPENAI_API_KEY");
-
-  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+  const res = await fetch(`${API_URL}/transcriptions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}` },
+    credentials: "include",
     body: form,
   });
   if (!res.ok) throw new Error("Transcription failed");
-  const data = await res.json();
+  const data = await parseJson<{ text: string }>(res);
   return data.text;
 }
