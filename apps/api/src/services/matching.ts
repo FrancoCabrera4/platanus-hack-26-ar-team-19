@@ -34,6 +34,10 @@ interface ScoringInput {
   }[];
 }
 
+interface ScoringResult {
+  matches: MatchCandidate[];
+}
+
 interface ProductCandidate {
   id: string;
   title: string;
@@ -248,26 +252,107 @@ export async function findMatches(
   }
 
   if (candidates.length === 0) return [];
-  if (candidates.length === 1) {
-    const only = candidates[0]!;
-    if (only.similarity < minLlmMatchScore()) return [];
-    return [
-      {
-        productId: only.id,
-        score: only.similarity,
-        rationale: "Only candidate above the semantic similarity threshold.",
-      },
-    ];
+
+  const candidateMap = new Map(
+    candidates.map((candidate) => [candidate.id, candidate]),
+  );
+  let matches = await scoreCandidatesWithLlm(
+    {
+      query: search.query,
+      expandedQuery: expanded,
+      requirements: search.requirements,
+      category: effectiveCategory,
+      maxPrice: search.maxPrice,
+      negotiationStrategy: search.negotiationStrategy,
+      imageDescription,
+      candidates: candidates.map((candidate) => ({
+        id: candidate.id,
+        title: candidate.title,
+        description: candidate.description,
+        category: candidate.category,
+        askPrice: candidate.askPrice,
+        vectorSimilarity: candidate.similarity,
+      })),
+    },
+    candidateMap,
+  );
+
+  if (imageDescription) {
+    matches = await visionRerank(matches, candidateMap, imageDescription);
   }
 
-  return candidates.map((c) => ({
-    productId: c.id,
-    score: c.similarity,
-    rationale: "Fallback: vector similarity + price adjustment.",
-  }));
+  return matches.slice(0, topN);
 }
 
 // --- Price-aware scoring ---
+
+async function scoreCandidatesWithLlm(
+  input: ScoringInput,
+  candidateMap: Map<string, ProductCandidate>,
+): Promise<MatchCandidate[]> {
+  const fallbackMatches = candidatesToMatches(
+    input.candidates
+      .map((candidate) => candidateMap.get(candidate.id))
+      .filter((candidate): candidate is ProductCandidate => Boolean(candidate)),
+    input.maxPrice,
+  );
+
+  try {
+    const result = await generateJSON<ScoringResult>({
+      system: `You are ranking product matches for an Argentine second-hand marketplace.
+
+Score how well each product satisfies the buyer's intent, not just broad category similarity.
+Use 0 for a different product type, 0.25 for weak/ambiguous matches, 0.5 for plausible but flawed matches, 0.75 for good matches, and 0.9+ only for excellent matches.
+Reject false positives aggressively: for example, accessories, parts, unrelated brands, or products that only share a category should score below 0.5.
+Consider requirements, category, visual description, budget, and the retrieval vectorSimilarity.
+Return only products with score >= ${minLlmMatchScore()}.`,
+      history: [
+        {
+          role: "user",
+          content: JSON.stringify(input),
+        },
+      ],
+      jsonSchema: SCORING_SCHEMA,
+      temperature: 0.1,
+    });
+
+    const seen = new Set<string>();
+    const scored = result.matches
+      .map((match) => {
+        const candidate = candidateMap.get(match.productId);
+        if (!candidate || seen.has(match.productId)) return null;
+        seen.add(match.productId);
+        const llmScore = clampScore(match.score);
+        if (llmScore < minLlmMatchScore()) return null;
+        const score = priceAdjustedScore(
+          llmScore,
+          candidate.askPrice,
+          input.maxPrice,
+        );
+        return {
+          productId: match.productId,
+          score,
+          rationale: match.rationale,
+        };
+      })
+      .filter((match): match is MatchCandidate => Boolean(match))
+      .filter((match) => match.score >= minLlmMatchScore())
+      .sort((a, b) => b.score - a.score);
+
+    if (scored.length === 0) {
+      log("[matching] LLM rejected all candidates.");
+    }
+    return scored;
+  } catch (err) {
+    log("[matching] LLM scoring failed:", (err as Error).message);
+    return fallbackMatches.filter((match) => match.score >= minLlmMatchScore());
+  }
+}
+
+function clampScore(score: number): number {
+  if (!Number.isFinite(score)) return 0;
+  return Math.max(0, Math.min(1, score));
+}
 
 function priceAdjustedScore(
   baseSimilarity: number,
