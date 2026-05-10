@@ -54,7 +54,12 @@ export default function SignupPage() {
     setLoading(true);
     setError(null);
     try {
-      await signup({ name, email, password });
+      await signup({
+        name,
+        email,
+        password,
+        location: location.trim(),
+      });
       router.push("/onboarding");
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "signup_failed";
